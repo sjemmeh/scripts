@@ -158,4 +158,8 @@ for DIR in "$PARENT_DIR"/*/; do
   fi
 done
 
+# Clean up unused images
+log "Cleaning up unused Docker images..."
+docker image prune -a -f
+
 log "Docker update check completed."
