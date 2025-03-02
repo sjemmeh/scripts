@@ -6,23 +6,24 @@
 BACKUP_DIR="/mnt/nvme/tmp/kvm_backup"
 RCLONE_REMOTE="gdrive:/vm-backup"
 DATE=$(date +%Y-%m-%d)
-LOG_FILE="/scripts/log/kvm_backup.log"
-
+LOG_FILE="/scripts/logs/kvm_backup.log"
 
 # Log function
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-mkdir -p "$BACKUP_DIR"
+# Create date-based parent directory
+DATE_BACKUP_DIR="${BACKUP_DIR}/${DATE}"
+mkdir -p "$DATE_BACKUP_DIR"
 
 log "Starting KVM backup..."
 
 for VM in $(virsh list --name); do
    log "Backing up $VM..."
 
-    # Create VM-specific backup directory
-    VM_BACKUP_DIR="$BACKUP_DIR/$VM"
+    # Create VM-specific backup directory within the date directory
+    VM_BACKUP_DIR="${DATE_BACKUP_DIR}/${VM}"
     mkdir -p "$VM_BACKUP_DIR"
 
     # Suspend the VM if running
@@ -43,32 +44,32 @@ for VM in $(virsh list --name); do
     fi
 
     # Copy the disk without compression
-    OUTPUT_IMAGE="$VM_BACKUP_DIR/${VM}_${DATE}.qcow2"
-   log "Copying $DISK_PATH to $OUTPUT_IMAGE..." 
+    OUTPUT_IMAGE="$VM_BACKUP_DIR/${VM}.qcow2"
+    log "Copying $DISK_PATH to $OUTPUT_IMAGE..." 
     cp "$DISK_PATH" "$OUTPUT_IMAGE"
 
-   log "Uploading $VM_BACKUP_DIR to $RCLONE_REMOTE/$VM/..." 
-    rclone copy "$VM_BACKUP_DIR" "$RCLONE_REMOTE/$VM/"
+    log "Uploading $VM_BACKUP_DIR to $RCLONE_REMOTE/${DATE}/${VM}/..." 
+    rclone copy "$VM_BACKUP_DIR" "$RCLONE_REMOTE/${DATE}/${VM}/"
 
     # Resume the VM if it was suspended
     virsh domstate "$VM" | grep -q "paused" && {
        log "Resuming $VM..." 
         virsh resume "$VM"
     }
+done
 
-    # Cleanup local backup
-    rm -rf "$VM_BACKUP_DIR"
+# Clean up local backups after all VMs are processed
+log "Cleaning up local backup directory..."
+rm -rf "$DATE_BACKUP_DIR"
 
-    # Remove old backups, keeping only the last 7
-   log "Removing old backups for $VM, keeping only the last 7..." 
-    rclone lsf "$RCLONE_REMOTE/$VM/" --files-only | sort -r | tail -n +8 | while read FILE; do
-       log "Deleting $RCLONE_REMOTE/$VM/$FILE..." 
-        rclone delete "$RCLONE_REMOTE/$VM/$FILE"
-    done
-
+# Keep only the last 7 daily backups in remote storage
+log "Removing old backup directories, keeping only the last 7 days..."
+rclone lsf "$RCLONE_REMOTE/" --dirs-only | sort -r | tail -n +8 | while read DIR; do
+    log "Deleting $RCLONE_REMOTE/$DIR"
+    rclone purge "$RCLONE_REMOTE/$DIR"
 done
 
 # Disabling maintenance mode
 /scripts/toggle_maintenance.sh disable
 
-log "KVM backup completed!" 
+log "KVM backup completed!"
