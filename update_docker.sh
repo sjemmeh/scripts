@@ -4,7 +4,7 @@
 # Usage: ./docker_update.sh /path/to/parent/directory
 
 PARENT_DIR="${1:-$(pwd)}"
-LOG_FILE="$PARENT_DIR/docker_updates.log"
+LOG_FILE="/scripts/logs/docker_updates.log"
 
 # Log function
 log() {
