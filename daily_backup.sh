@@ -3,7 +3,7 @@
 # Define source and destination
 SOURCE="/mnt/Data/Backup/"
 DESTINATION="gdrive:daily-backup"
-LOGFILE="/scripts/logs/daily_backup.log"
+LOG_FILE="/scripts/logs/daily_backup.log"
 
 # Log function
 log() {
