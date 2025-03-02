@@ -29,9 +29,9 @@ print_info() {
 detect_disk() {
     print_section "Detecting available disks"
     
-    # List available disks
+    # List available disks - fixed the command
     echo "Available disks:"
-    lsblk -dpno NAME,SIZE,MODEL | grep -E '/(sd[a-z]|nvme[0-9]n[0-9])$'
+    lsblk -dp | grep -E "disk"
     
     # Ask user to select a disk
     echo -e "\nPlease enter the disk device (e.g., /dev/nvme0n1 or /dev/sda):"
@@ -144,6 +144,22 @@ mount_filesystems() {
     mount $PART1 /mnt/efi
 }
 
+# Enable multilib repository
+enable_multilib() {
+    print_section "Enabling multilib repository"
+    
+    # Check if multilib is already enabled
+    if grep -q "^\[multilib\]" /etc/pacman.conf; then
+        print_info "Multilib repository already enabled"
+    else
+        print_info "Enabling multilib repository"
+        # Uncomment multilib section in pacman.conf
+        sed -i "/\[multilib\]/,/Include/"'s/^#//' /etc/pacman.conf
+        print_info "Updating package database with multilib"
+        pacman -Syy
+    fi
+}
+
 # Install base system
 install_base_system() {
     print_section "Installing base system"
@@ -157,7 +173,7 @@ install_base_system() {
     pacstrap -K /mnt base base-devel linux linux-firmware git btrfs-progs grub efibootmgr grub-btrfs \
         inotify-tools timeshift nano git networkmanager amd-ucode pipewire pipewire-alsa pipewire-pulse \
         pipewire-jack wireplumber cifs-utils zsh zsh-completions zsh-autosuggestions man sudo xorg sddm \
-        plasma dolphin alacritty ntfs-3g spectacle kcalc
+        plasma dolphin alacritty ntfs-3g spectacle kcalc nvidia-open nvidia-utils lib32-nvidia-utils
 }
 
 # Generate fstab
@@ -223,11 +239,6 @@ echo "%wheel ALL=(ALL) ALL" > /etc/sudoers.d/wheel
 echo "Enabling services"
 systemctl enable NetworkManager sddm
 
-# Configure pacman for multilib
-echo "Enabling multilib repository"
-sed -i "/\[multilib\]/,/Include/"'s/^#//' /etc/pacman.conf
-pacman -Sy
-
 # Configure environment for NVIDIA
 echo "Configuring environment for NVIDIA"
 cat > /etc/environment << 'END'
@@ -238,7 +249,7 @@ END
 # Configure mkinitcpio.conf for NVIDIA
 echo "Configuring initramfs for NVIDIA"
 sed -i 's/MODULES=().*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-sed -i 's/HOOKS=".*kms.*"/HOOKS="base udev autodetect modconf block filesystems keyboard fsck"/' /etc/mkinitcpio.conf
+sed -i 's/HOOKS=.*kms.*/HOOKS=(base udev autodetect modconf block filesystems keyboard fsck)/' /etc/mkinitcpio.conf
 
 # Configure GRUB for NVIDIA
 echo "Configuring GRUB for NVIDIA"
@@ -270,9 +281,6 @@ cd ~/
 git clone https://aur.archlinux.org/yay.git
 cd yay
 makepkg -si
-
-echo "Installing NVIDIA drivers"
-yay -S nvidia-open nvidia-utils lib32-nvidia-utils
 
 echo "Installing additional applications"
 yay -S brave termius discord 1password spotify visual-studio-code-bin p7zip-gui lutris steam
@@ -329,6 +337,7 @@ create_partitions
 format_partitions
 create_subvolumes
 mount_filesystems
+enable_multilib
 install_base_system
 generate_fstab
 configure_system
