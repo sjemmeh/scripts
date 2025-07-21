@@ -1,75 +1,83 @@
 #!/bin/bash
-
 # Set maintenance mode
-/scripts/toggle_maintenance.sh enable
-
-BACKUP_DIR="/mnt/nvme/tmp/kvm_backup"
-RCLONE_REMOTE="gdrive:/vm-backup"
-DATE=$(date +%Y-%m-%d)
-LOG_FILE="/scripts/logs/kvm_backup.log"
+BACKUP_DIR="/mnt/nvme/tmp/proxmox_backup"
+RCLONE_REMOTE="gdrive:Server/vm-backup"
+DATE=$(/bin/date +%d-%m-%Y)
+LOG_FILE="/mnt/nvme/scripts/logs/proxmox_backup.log"
+COMPRESS=true  # Set to false if you want to disable compression
+VM_IDS=(101)  # List VM IDs to back up, e.g., (100 101 102)
 
 # Log function
 log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+  echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] $1" | /usr/bin/tee -a "$LOG_FILE"
 }
 
-# Create date-based parent directory
-DATE_BACKUP_DIR="${BACKUP_DIR}/${DATE}"
-mkdir -p "$DATE_BACKUP_DIR"
+log "Starting Proxmox backup..."
 
-log "Starting KVM backup..."
+#To-Do: Make this a fucking function :)
+/mnt/nvme/scripts/toggle_maintenance.sh enable
 
-for VM in $(virsh list --name); do
-   log "Backing up $VM..."
-
-    # Create VM-specific backup directory within the date directory
-    VM_BACKUP_DIR="${DATE_BACKUP_DIR}/${VM}"
-    mkdir -p "$VM_BACKUP_DIR"
-
-    # Suspend the VM if running
-    virsh domstate "$VM" | grep -q "running" && {
-       log "Suspending $VM..."
-        virsh suspend "$VM"
-    }
-
-    # Backup VM XML configuration
-    virsh dumpxml "$VM" > "$VM_BACKUP_DIR/${VM}.xml"
-
-    # Get VM disk path
-    DISK_PATH=$(virsh domblklist "$VM" | awk '/\.qcow2/ {print $2}')
-
+# Get list of specified VMs
+for VMID in "${VM_IDS[@]}"; do
+  if ! /usr/sbin/qm list | /usr/bin/awk '{print $1}' | /bin/grep -q "^$VMID$"; then
+    log "VM $VMID not found, skipping..."
+    continue
+  fi
+  
+  VM_NAME=$(/usr/sbin/qm config $VMID | /bin/grep name | /usr/bin/cut -d' ' -f2)
+  log "Backing up VM $VMID ($VM_NAME)..."
+  
+  VM_BACKUP_DIR="${BACKUP_DIR}/${VMID}_${VM_NAME}"
+  /bin/mkdir -p "$VM_BACKUP_DIR"
+  
+  DATE_BACKUP_DIR="${VM_BACKUP_DIR}/${DATE}"
+  /bin/mkdir -p "$DATE_BACKUP_DIR"
+  
+  if /usr/sbin/qm status $VMID | /bin/grep -q "status: running"; then
+    log "Suspending VM $VMID..."
+    /usr/sbin/qm suspend $VMID
+  fi
+  
+  /usr/sbin/qm config $VMID > "$DATE_BACKUP_DIR/vm-${VMID}-config.conf"
+  
+  DISK_PATHS=$(/usr/sbin/qm config $VMID | /bin/grep -E 'scsi|sata|ide|virtio' | /bin/grep disk | /usr/bin/awk '{print $2}' | /usr/bin/cut -d',' -f1)
+  
+  if [ -z "$DISK_PATHS" ]; then
+    log "No disks found for VM $VMID, skipping..."
+    continue
+  fi
+  
+  DISK_COUNT=0
+  for DISK in $DISK_PATHS; do
+    DISK_PATH=$(/usr/sbin/pvesm path $DISK)
+    
     if [ -z "$DISK_PATH" ]; then
-       log "No qcow2 disk found for $VM, skipping..." 
-        continue
+      log "Could not resolve path for disk $DISK, skipping..."
+      continue
     fi
-
-    # Copy the disk without compression
-    OUTPUT_IMAGE="$VM_BACKUP_DIR/${VM}.qcow2"
-    log "Copying $DISK_PATH to $OUTPUT_IMAGE..." 
-    cp "$DISK_PATH" "$OUTPUT_IMAGE"
-
-    log "Uploading $VM_BACKUP_DIR to $RCLONE_REMOTE/${DATE}/${VM}/..." 
-    rclone copy "$VM_BACKUP_DIR" "$RCLONE_REMOTE/${DATE}/${VM}/"
-
-    # Resume the VM if it was suspended
-    virsh domstate "$VM" | grep -q "paused" && {
-       log "Resuming $VM..." 
-        virsh resume "$VM"
-    }
+    
+    if [ "$COMPRESS" = true ]; then
+      OUTPUT_IMAGE="$DATE_BACKUP_DIR/vm-${VMID}-disk-${DISK_COUNT}.raw.gz"
+      log "Copying and compressing $DISK_PATH to $OUTPUT_IMAGE..."
+      /bin/cat "$DISK_PATH" | /bin/gzip -c > "$OUTPUT_IMAGE"
+    else
+      OUTPUT_IMAGE="$DATE_BACKUP_DIR/vm-${VMID}-disk-${DISK_COUNT}.raw"
+      log "Copying $DISK_PATH to $OUTPUT_IMAGE..."
+      /bin/cp "$DISK_PATH" "$OUTPUT_IMAGE"
+    fi
+    
+    DISK_COUNT=$((DISK_COUNT+1))
+  done
+  
+  log "Uploading $DATE_BACKUP_DIR to $RCLONE_REMOTE/${VMID}_${VM_NAME}/${DATE}/..."
+  /usr/bin/rclone copy "$DATE_BACKUP_DIR" "$RCLONE_REMOTE/${VMID}_${VM_NAME}/${DATE}/"
+  log "Resuming VM $VMID..."
+  /usr/sbin/qm resume $VMID
+  
+  log "Cleaning up local backup directory for VM $VMID..."
+  /bin/rm -rf "$DATE_BACKUP_DIR"
 done
 
-# Clean up local backups after all VMs are processed
-log "Cleaning up local backup directory..."
-rm -rf "$DATE_BACKUP_DIR"
+/mnt/nvme/scripts/toggle_maintenance.sh disable
 
-# Keep only the last 7 daily backups in remote storage
-log "Removing old backup directories, keeping only the last 7 days..."
-rclone lsf "$RCLONE_REMOTE/" --dirs-only | sort -r | tail -n +8 | while read DIR; do
-    log "Deleting $RCLONE_REMOTE/$DIR"
-    rclone purge "$RCLONE_REMOTE/$DIR"
-done
-
-# Disabling maintenance mode
-/scripts/toggle_maintenance.sh disable
-
-log "KVM backup completed!"
+log "Proxmox backup completed!"

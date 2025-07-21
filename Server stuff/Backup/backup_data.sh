@@ -2,13 +2,8 @@
 
 # Define source and destination
 SOURCE="/mnt/Data/Backup/"
-DESTINATION="gdrive:daily-backup"
-LOG_FILE="/scripts/logs/daily_backup.log"
-
-# Log function
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
+DESTINATION="gdrive:Server/jaimie-backup"
+LOGFILE="/mnt/nvme/scripts/logs/backup.log"
 
 # Function to check if rclone is running
 is_rclone_running() {
@@ -18,13 +13,13 @@ is_rclone_running() {
 
 # Check if rclone is running
 if is_rclone_running; then
-    log "Backup already running, skipping this hour"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Backup already running, skipping this hour" >> "$LOGFILE"
     exit 0
 fi
 
 # Run rclone if not running
-log "Starting backup"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting backup" >> "$LOGFILE"
 rclone sync "$SOURCE" "$DESTINATION" --progress --log-file="$LOGFILE" --log-level INFO
 
 # Log completion
-log "Backup completed"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Backup completed" >> "$LOGFILE"
