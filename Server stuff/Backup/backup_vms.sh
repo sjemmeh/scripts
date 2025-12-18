@@ -1,132 +1,114 @@
 #!/bin/bash
 
 # --- Configuration ---
-BACKUP_DIR="/mnt/nvme/tmp/proxmox_backup"
+BACKUP_DIR="/mnt/fast-nvme/backup-tmp"
 RCLONE_REMOTE="gdrive:Server/vm-backup"
-LOG_FILE="/mnt/logs/proxmox_backup/proxmox_backup.log"
-PUSHGATEWAY="10.0.0.5:9091" # 
-VM_IDS=(101) # 
+LOG_FILE="/opt/logs/proxmox_backup/proxmox_backup.log"
+VM_IDS=(101) 
+
+# Ensure strict error handling
+set -e                # Exit immediately if a command exits with a non-zero status
+set -o pipefail       # Return exit status of the last command in the pipe that failed
 
 # --- Functions ---
 
-# Log function
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-# Reports the maintenance mode status to Prometheus
-report_maintenance_status() {
-  # status: 1=enabled, 0=disabled
-  local status=$1
-  cat <<EOF | curl --data-binary @- http://$PUSHGATEWAY/metrics/job/maintenance_mode
-  # TYPE maintenance_mode_status gauge
-  maintenance_mode_status $status
-EOF
-}
-
-# Toggle maintenance mode (I'm lazy and dont want to change this too much, maintenance mode is now just a metric to see if backups are running)
-toggle_maintenance() {
-  local MODE=$1 # "enable" or "disable"
-
-  if [[ "$MODE" == "enable" ]]; then
-    report_maintenance_status 1
-  elif [[ "$MODE" == "disable" ]]; then
-    report_maintenance_status 0
-  else
-    log "Usage: toggle_maintenance [enable|disable]"
-    return 1
-  fi
-
-}
-
-# Reports the final backup status to Prometheus
-report_backup_status() {
-  local status=$1
-  local duration=$2
-  cat <<EOF | curl --data-binary @- http://$PUSHGATEWAY/metrics/job/backup_vms
-  # TYPE backup_vms_last_success gauge
-  backup_vms_last_success $(date +%s)
-  # TYPE backup_vms_last_duration_seconds gauge
-  backup_vms_last_duration_seconds $duration
-  # TYPE backup_vms_last_exit_code gauge
-  backup_vms_last_exit_code $status
-EOF
+ensure_dependencies() {
+  for cmd in lz4 rclone qm; do
+    if ! command -v "$cmd" &> /dev/null; then
+      log "ERROR: $cmd could not be found. Please install it."
+      exit 1
+    fi
+  done
 }
 
 # --- Main Script ---
 
-# Make sure lz4 is installed
-if ! command -v lz4 &> /dev/null
-then
-    log "ERROR: lz4 could not be found. Please install it with 'sudo apt-get install lz4'"
-    exit 1
-fi
+ensure_dependencies
 
 start_time=$(date +%s)
-log "Starting Proxmox backup using lz4..."
+log "Starting Proxmox backup workflow..."
 
-# Enable maintenance mode
-toggle_maintenance enable
+# Create main backup dir if it doesn't exist
+mkdir -p "$BACKUP_DIR"
 
-# Main backup logic
 for VMID in "${VM_IDS[@]}"; do
-  if ! /usr/sbin/qm list | /usr/bin/awk '{print $1}' | /bin/grep -q "^$VMID$"; then
-    log "VM $VMID not found, skipping..."
+  # Validate VM exists
+  if ! /usr/sbin/qm list | awk '{print $1}' | grep -q "^$VMID$"; then
+    log "WARNING: VM $VMID not found, skipping..."
     continue
   fi
 
+  # Get VM Name and setup paths
   VM_NAME=$(/usr/sbin/qm config "$VMID" | grep name | cut -d' ' -f2)
   DATE=$(date +%d-%m-%Y)
-  VM_BACKUP_DIR="${BACKUP_DIR}/${VMID}_${VM_NAME}"
-  DATE_BACKUP_DIR="${VM_BACKUP_DIR}/${DATE}"
+  # Structure: /mnt/fast-nvme/backup-tmp/101_MyVM/18-12-2025
+  TEMP_VM_DIR="${BACKUP_DIR}/${VMID}_${VM_NAME}/${DATE}"
 
-  log "Backing up VM $VMID ($VM_NAME)..."
-  /bin/mkdir -p "$DATE_BACKUP_DIR"
+  log "Processing VM $VMID ($VM_NAME)..."
+  mkdir -p "$TEMP_VM_DIR"
 
-  if /usr/sbin/qm status "$VMID" | /bin/grep -q "status: running"; then
-    log "Suspending VM $VMID..."
+  # 1. Handle VM State (Suspend if running)
+  VM_WAS_RUNNING=false
+  if /usr/sbin/qm status "$VMID" | grep -q "status: running"; then
+    log "Suspending VM $VMID to ensure disk consistency..."
     /usr/sbin/qm suspend "$VMID"
+    VM_WAS_RUNNING=true
   fi
 
-  /usr/sbin/qm config "$VMID" > "$DATE_BACKUP_DIR/vm-${VMID}-config.conf"
+  # 2. Backup Config
+  log "Backing up config..."
+  /usr/sbin/qm config "$VMID" > "$TEMP_VM_DIR/vm-${VMID}-config.conf"
 
-  DISK_PATHS=$(/usr/sbin/qm config "$VMID" | grep -E 'scsi|sata|ide|virtio' | grep disk | /usr/bin/awk '{print $2}' | /usr/bin/cut -d',' -f1)
+  # 3. Identify and Backup Disks
+  # optimization: exclude CD-ROMs explicitly if they appear as ide/sata
+  DISK_PATHS=$(/usr/sbin/qm config "$VMID" | grep -E 'scsi|sata|ide|virtio' | grep disk | grep -v 'media=cdrom' | awk '{print $2}' | cut -d',' -f1)
 
   if [ -z "$DISK_PATHS" ]; then
-    log "No disks found for VM $VMID, skipping..."
-    continue
+    log "WARNING: No disks found for VM $VMID."
+  else
+    DISK_COUNT=0
+    for DISK in $DISK_PATHS; do
+      DISK_PATH=$(/usr/sbin/pvesm path "$DISK")
+
+      if [ -z "$DISK_PATH" ]; then
+        log "WARNING: Could not resolve path for disk $DISK, skipping..."
+        continue
+      fi
+
+      OUTPUT_IMAGE="$TEMP_VM_DIR/vm-${VMID}-disk-${DISK_COUNT}.raw.lz4"
+      log "Backing up disk: $DISK_PATH -> $OUTPUT_IMAGE"
+      
+      # Using cat is fine, but we ensure pipefail catches lz4 errors
+      cat "$DISK_PATH" | lz4 -1 -c > "$OUTPUT_IMAGE"
+
+      DISK_COUNT=$((DISK_COUNT+1))
+    done
   fi
 
-  DISK_COUNT=0
-  for DISK in $DISK_PATHS; do
-    DISK_PATH=$(/usr/sbin/pvesm path "$DISK")
+  # 4. Resume VM immediately after disk reads are done
+  if [ "$VM_WAS_RUNNING" = true ]; then
+    log "Resuming VM $VMID..."
+    /usr/sbin/qm resume "$VMID"
+  fi
 
-    if [ -z "$DISK_PATH" ]; then
-      log "Could not resolve path for disk $DISK, skipping..."
-      continue
-    fi
+  # 5. Upload to Rclone
+  REMOTE_PATH="$RCLONE_REMOTE/${VMID}_${VM_NAME}/${DATE}/"
+  log "Uploading backup to $REMOTE_PATH..."
+  
+  if /usr/bin/rclone copy "$TEMP_VM_DIR" "$REMOTE_PATH"; then
+    log "Upload successful. Cleaning up local files..."
+    rm -rf "${BACKUP_DIR:?}/${VMID}_${VM_NAME}" # Safe delete
+  else
+    log "ERROR: Rclone upload failed! Keeping local files at $TEMP_VM_DIR for safety."
+  fi
 
-    OUTPUT_IMAGE="$DATE_BACKUP_DIR/vm-${VMID}-disk-${DISK_COUNT}.raw.lz4"
-    log "Copying and compressing with lz4: $DISK_PATH to $OUTPUT_IMAGE..."
-    /bin/cat "$DISK_PATH" | /usr/bin/lz4 -c > "$OUTPUT_IMAGE"
-
-    DISK_COUNT=$((DISK_COUNT+1))
-  done
-
-  log "Uploading $DATE_BACKUP_DIR to $RCLONE_REMOTE/${VMID}_${VM_NAME}/${DATE}/..."
-  /usr/bin/rclone copy "$DATE_BACKUP_DIR" "$RCLONE_REMOTE/${VMID}_${VM_NAME}/${DATE}/"
-  log "Resuming VM $VMID..."
-  /usr/sbin/qm resume "$VMID"
-
-  log "Cleaning up local backup directory for VM $VMID..."
-  /bin/rm -rf "$DATE_BACKUP_DIR"
 done
-
-# Disable maintenance mode
-toggle_maintenance disable
 
 end_time=$(date +%s)
 duration=$((end_time - start_time))
-report_backup_status 0 "$duration" # Assuming success (exit code 0)
 
-log "Proxmox lz4 backup completed!"
+log "Backup completed in ${duration} seconds."
