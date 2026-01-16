@@ -13,6 +13,6 @@ curl -L https://github.com/sethyx/gasket-driver/commit/2b808eb8a0e313ef390bd26f6
 # Create install deb
 debuild -us -uc -tc -b
 # Go back 1 dir and install
-cd ../ && dpkg -i ../gasket-dkms*.deb
+cd ../ && dpkg -i ./gasket-dkms*.deb
 # Delete dir
 cd ../ && rm -Rf build
