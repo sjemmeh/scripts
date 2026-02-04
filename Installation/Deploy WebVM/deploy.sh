@@ -45,7 +45,7 @@ sleep 5
 msg_info "Updating system and installing dependencies (Quiet Mode)..."
 
 # Redirects standard output to /dev/null, so only errors are shown in the console
-pct exec $CTID -- sh -c "apt-get update -qq > /dev/null && apt-get -y upgrade -qq > /dev/null && apt-get install -y -qq ca-certificates curl gnupg git openssh-client nano > /dev/null" || msg_error "Package installation failed."
+pct exec $CTID -- sh -c "apt-get update -qq > /dev/null && apt-get -y upgrade -qq > /dev/null && apt-get install -y -qq ca-certificates curl gnupg openssh-client > /dev/null" || msg_error "Package installation failed."
 
 msg_info "Installing Docker..."
 # official setup for Docker on Debian 13
