@@ -6,6 +6,17 @@ msg_ok() { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 
 echo -e "\e[1;34m--- Web-App-Deployer (Debian + Docker Hub) Deployment ---\e[0m"
+echo ""
+echo "Select deployment mode:"
+echo "  1) Full deployment (Docker + app config, .env, compose, Docker Hub login)"
+echo "  2) Docker only    (bare Debian LXC with Docker installed, no app setup)"
+echo ""
+read -p "Enter choice [1/2]: " DEPLOY_MODE
+case "$DEPLOY_MODE" in
+    1|2) ;;
+    *) echo "Invalid choice. Exiting."; exit 1 ;;
+esac
+echo ""
 
 # 1. Load configs from local file
 if [ -f "./vm_config.conf" ]; then
@@ -14,13 +25,39 @@ else
     msg_error "vm_config.conf not found next to script. Create it first."
 fi
 
+# Validate required config fields
+REQUIRED_VARS=(TEMPLATE STORAGE)
+if [ "$DEPLOY_MODE" = "1" ]; then
+    REQUIRED_VARS+=(DB_HOST DB_USER DB_PASS DOCKER_USERNAME DOCKER_PASSWORD DOCKER_IMAGE)
+fi
+for VAR in "${REQUIRED_VARS[@]}"; do
+    if [ -z "${!VAR}" ]; then
+        msg_error "Required config field '$VAR' is not set in vm_config.conf."
+    fi
+done
+
 # 2. User Inputs
 read -p "Enter Container Name (Hostname): " CUSTOM_HOSTNAME
-read -p "Enter Database Name: " DB_NAME
+if [ "$DEPLOY_MODE" = "1" ]; then
+    read -p "Enter Database Name: " DB_NAME
+fi
 
 # --- Identify ID and Network ---
 CTID=$(pvesh get /cluster/nextid)
+[ -z "$CTID" ] && msg_error "Failed to obtain a container ID from pvesh."
 IP="${IP_BASE}${CTID}"
+
+# --- Cleanup trap (runs on any error after container is created) ---
+CTID_CREATED=false
+cleanup() {
+    if [ "$CTID_CREATED" = true ]; then
+        echo ""
+        msg_info "Error detected. Destroying incomplete container $CTID..."
+        pct stop "$CTID" 2>/dev/null || true
+        pct destroy "$CTID" 2>/dev/null || true
+    fi
+}
+trap cleanup ERR
 
 # --- Create Container ---
 msg_info "Creating Debian LXC $CTID ($CUSTOM_HOSTNAME) with DNS $DNS..."
@@ -35,11 +72,15 @@ pct create $CTID "$STORAGE:vztmpl/$TEMPLATE" \
   --unprivileged 1 \
   --tags "$var_tag" \
   --features "nesting=1,keyctl=1" || msg_error "Failed to create container."
+CTID_CREATED=true
 
 # --- Start and Initialize ---
 msg_info "Starting Container..."
 pct start $CTID || msg_error "Failed to start container."
-sleep 5
+msg_info "Waiting for container to start..."
+until pct status $CTID | grep -q "status: running"; do
+    sleep 1
+done
 
 # --- Install Base Packages & Docker (Debian/Apt) ---
 msg_info "Updating system and installing dependencies (Quiet Mode)..."
@@ -61,22 +102,23 @@ pct exec $CTID -- sh -c "apt-get update -qq > /dev/null && apt-get install -y -q
 msg_info "Configuring Docker..."
 pct exec $CTID -- usermod -aG docker root
 
-# --- Create App Directory & Files ---
-msg_info "Creating app folder and configuration files..."
-pct exec $CTID -- mkdir -p /root/app
+if [ "$DEPLOY_MODE" = "1" ]; then
+    # --- Create App Directory & Files ---
+    msg_info "Creating app folder and configuration files..."
+    pct exec $CTID -- mkdir -p /root/app
 
-# Generate .env file
-DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:5432/${DB_NAME}"
-cat <<EOF > ./temp_env
+    # Generate .env file
+    DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:5432/${DB_NAME}"
+    cat <<EOF > ./temp_env
 DATABASE_URL="$DATABASE_URL"
 PORT=80
 PROJECT_NAME="$CUSTOM_HOSTNAME"
 EOF
-pct push $CTID ./temp_env /root/app/.env
-rm ./temp_env
+    pct push $CTID ./temp_env /root/app/.env
+    rm ./temp_env
 
-# Generate docker-compose.yml
-cat <<EOF > ./temp_compose
+    # Generate docker-compose.yml
+    cat <<EOF > ./temp_compose
 services:
   service-backend:
     container_name: \${PROJECT_NAME}
@@ -94,43 +136,43 @@ services:
       - STORAGE_PATH=/app/storage
     restart: unless-stopped
     ports:
-      - "\${PORT:-3000}:\${PORT:-3000}"
+      - "\${PORT:-80}:\${PORT:-80}"
 EOF
-pct push $CTID ./temp_compose /root/app/docker-compose.yml
-rm ./temp_compose
+    pct push $CTID ./temp_compose /root/app/docker-compose.yml
+    rm ./temp_compose
 
-# --- Docker Login ---
-msg_info "Authenticating with Docker Hub..."
-pct exec $CTID -- sh -c "docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD"
+    # --- Docker Login ---
+    msg_info "Authenticating with Docker Hub..."
+    pct exec $CTID -- sh -c "docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD"
 
-# --- Reboot the pct ---
-msg_info "Rebooting for updates..."
-pct reboot $CTID
+    # --- Reboot the pct ---
+    msg_info "Rebooting for updates..."
+    pct reboot $CTID
 
-msg_info "Waiting for container to come back online..."
-# Loop to wait until 'pct status' returns 'running'
-until pct status $CTID | grep -q "status: running"; do
-  sleep 1
-done
+    msg_info "Waiting for container to come back online..."
+    until pct status $CTID | grep -q "status: running"; do
+        sleep 1
+    done
 
-# Optional: Wait until the network is actually responsive inside the LXC
-until pct exec $CTID -- ip addr show eth0 | grep -q "inet "; do
-  sleep 1
-done
+    until pct exec $CTID -- ip addr show eth0 | grep -q "inet "; do
+        sleep 1
+    done
 
-msg_ok "Container is back online!"
+    msg_ok "Container is back online!"
 
-# --- Optional Container Start ---
-echo ""
-read -p "Would you like to pull and start the container now? (y/N): " START_NOW
+    # --- Optional Container Start ---
+    echo ""
+    read -p "Would you like to pull and start the container now? (y/N): " START_NOW
 
-if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
-    msg_info "Pulling image and starting container..."
-    pct exec $CTID -- sh -c "cd /root/app && docker compose pull && docker compose up -d"
-    msg_ok "Container started successfully!"
-else
-    msg_info "Skipping container start. You can start it later by running: pct enter $CTID"
+    if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
+        msg_info "Pulling image and starting container..."
+        pct exec $CTID -- sh -c "cd /root/app && docker compose pull && docker compose up -d"
+        msg_ok "Container started successfully!"
+    else
+        msg_info "Skipping container start. You can start it later by running: pct enter $CTID"
+    fi
 fi
 
+trap - ERR
 msg_ok "Deployment complete!"
 msg_info "LXC ID: $CTID | Name: $CUSTOM_HOSTNAME | IP: $IP | DNS: $DNS"
