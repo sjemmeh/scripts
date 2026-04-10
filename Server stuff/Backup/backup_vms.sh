@@ -96,6 +96,10 @@ if [ "$FULL_BACKUP" = true ]; then
     log "Running Retention Policy (> $RETENTION_DAYS)..."
     rclone delete "$RCLONE_REMOTE" --min-age "$RETENTION_DAYS" --verbose 2>> "$LOG_FILE"
     rclone rmdirs "$RCLONE_REMOTE" --leave-root --verbose 2>> "$LOG_FILE"
+
+    RCLONE_REMOTE_NAME="${RCLONE_REMOTE%%:*}"
+    log "Emptying Google Drive trash for remote '$RCLONE_REMOTE_NAME'..."
+    rclone cleanup "${RCLONE_REMOTE_NAME}:" --verbose 2>> "$LOG_FILE"
 fi
 
 log "Backup and Cleanup Completed."
