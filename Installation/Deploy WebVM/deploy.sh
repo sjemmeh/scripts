@@ -4,6 +4,123 @@
 msg_info() { echo -e "\e[34m[INFO]\e[0m $1"; }
 msg_ok() { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
+msg_warn() { echo -e "\e[33m[WARN]\e[0m $1"; }
+
+# --- Rotate DB Password ---
+rotate_db_password() {
+    echo -e "\e[1;34m--- Web-App-Deployer: Rotate DB Password ---\e[0m"
+    echo ""
+
+    # Load config
+    if [ -f "./vm_config.conf" ]; then
+        source ./vm_config.conf
+    else
+        msg_error "vm_config.conf not found next to script."
+    fi
+
+    # Validate required fields
+    for VAR in DB_LXC_ID DB_USER DB_PASS; do
+        if [ -z "${!VAR}" ]; then
+            msg_error "Required config field '$VAR' is not set in vm_config.conf."
+        fi
+    done
+
+    # Warn about special characters
+    echo ""
+    msg_warn "Only alphanumeric characters (a-z, A-Z, 0-9) are supported in the password."
+    msg_warn "Special characters such as @, /, !, #, etc. will break the sed substitution and are not allowed."
+    echo ""
+
+    # Prompt for new password (with confirmation)
+    while true; do
+        read -s -p "Enter new DB password: " NEW_PASS
+        echo ""
+        read -s -p "Confirm new DB password: " NEW_PASS_CONFIRM
+        echo ""
+        if [ "$NEW_PASS" != "$NEW_PASS_CONFIRM" ]; then
+            msg_warn "Passwords do not match. Try again."
+            echo ""
+            continue
+        fi
+        if [ -z "$NEW_PASS" ]; then
+            msg_warn "Password cannot be empty. Try again."
+            echo ""
+            continue
+        fi
+        if [[ "$NEW_PASS" =~ [^a-zA-Z0-9] ]]; then
+            msg_error "Password contains unsupported special characters. Only a-z, A-Z, 0-9 are allowed."
+        fi
+        break
+    done
+
+    # Change postgres role password inside the DB LXC
+    msg_info "Updating PostgreSQL role password for user '$DB_USER' in LXC $DB_LXC_ID..."
+    pct exec "$DB_LXC_ID" -- su -s /bin/sh -c "psql -U postgres -c \"ALTER ROLE \\\"$DB_USER\\\" PASSWORD '$NEW_PASS';\"" postgres \
+        || msg_error "Failed to update PostgreSQL password. vm_config.conf has NOT been changed."
+    msg_ok "PostgreSQL password updated."
+
+    # Update DB_PASS in vm_config.conf
+    msg_info "Updating DB_PASS in vm_config.conf..."
+    sed -i "s|^DB_PASS=.*|DB_PASS=\"$NEW_PASS\"|" ./vm_config.conf
+    msg_ok "vm_config.conf updated."
+
+    # Discover web LXCs by tag, excluding the DB LXC
+    msg_info "Discovering web LXCs with tag '$var_tag'..."
+    UPDATED=()
+    SKIPPED=()
+
+    while IFS= read -r line; do
+        VMID=$(echo "$line" | awk '{print $1}')
+        [ "$VMID" = "$DB_LXC_ID" ] && continue
+
+        # Check container is running
+        STATUS=$(pct status "$VMID" 2>/dev/null | awk '{print $2}')
+        if [ "$STATUS" != "running" ]; then
+            msg_info "LXC $VMID is not running — skipping."
+            SKIPPED+=("$VMID (not running)")
+            continue
+        fi
+
+        # Check if /root/app/.env exists
+        if ! pct exec "$VMID" -- test -f /root/app/.env 2>/dev/null; then
+            msg_info "LXC $VMID has no /root/app/.env — skipping."
+            SKIPPED+=("$VMID (no .env)")
+            continue
+        fi
+
+        # Rewrite password in DATABASE_URL using sed
+        msg_info "Updating DATABASE_URL in LXC $VMID..."
+        pct exec "$VMID" -- sed -i "s|\\(postgresql://$DB_USER:\\)[^@]*\\(@\\)|\\1$NEW_PASS\\2|" /root/app/.env \
+            || { msg_warn "Failed to update .env in LXC $VMID — skipping restart."; SKIPPED+=("$VMID (sed failed)"); continue; }
+
+        # Restart docker compose
+        msg_info "Restarting app in LXC $VMID..."
+        pct exec "$VMID" -- sh -c "cd /root/app && docker compose up -d" \
+            || { msg_warn "Failed to restart compose in LXC $VMID."; SKIPPED+=("$VMID (restart failed)"); continue; }
+
+        msg_ok "LXC $VMID updated and restarted."
+        UPDATED+=("$VMID")
+
+    done < <(pct list --full 2>/dev/null | awk -v tag="$var_tag" 'NR>1 && $0 ~ tag {print $0}')
+
+    # Summary
+    echo ""
+    echo -e "\e[1;34m--- Summary ---\e[0m"
+    if [ ${#UPDATED[@]} -gt 0 ]; then
+        msg_ok "Updated containers: ${UPDATED[*]}"
+    else
+        msg_info "No containers were updated."
+    fi
+    if [ ${#SKIPPED[@]} -gt 0 ]; then
+        msg_info "Skipped: ${SKIPPED[*]}"
+    fi
+}
+
+# --- CLI Argument Handling ---
+if [ "$1" = "rotate-db-password" ]; then
+    rotate_db_password
+    exit 0
+fi
 
 echo -e "\e[1;34m--- Web-App-Deployer (Debian + Docker Hub) Deployment ---\e[0m"
 echo ""
@@ -101,6 +218,14 @@ pct exec $CTID -- sh -c "apt-get update -qq > /dev/null && apt-get install -y -q
 # --- Finalize Container Environment ---
 msg_info "Configuring Docker..."
 pct exec $CTID -- usermod -aG docker root
+
+# --- Inject SSH Public Key ---
+if [ -n "$SSH_PUBLIC_KEY" ]; then
+    msg_info "Adding SSH public key to root's authorized_keys..."
+    pct exec $CTID -- sh -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+    pct exec $CTID -- sh -c "echo '$SSH_PUBLIC_KEY' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
+    msg_ok "SSH public key added."
+fi
 
 if [ "$DEPLOY_MODE" = "1" ]; then
     # --- Create App Directory & Files ---
