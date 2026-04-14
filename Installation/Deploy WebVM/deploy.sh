@@ -69,9 +69,14 @@ rotate_db_password() {
     UPDATED=()
     SKIPPED=()
 
-    while IFS= read -r line; do
-        VMID=$(echo "$line" | awk '{print $1}')
+    while IFS= read -r VMID; do
         [ "$VMID" = "$DB_LXC_ID" ] && continue
+
+        # Check tag via pct config
+        TAGS=$(pct config "$VMID" 2>/dev/null | awk -F': ' '/^tags:/{print $2}')
+        if [[ "$TAGS" != *"$var_tag"* ]]; then
+            continue
+        fi
 
         # Check container is running
         STATUS=$(pct status "$VMID" 2>/dev/null | awk '{print $2}')
@@ -101,7 +106,7 @@ rotate_db_password() {
         msg_ok "LXC $VMID updated and restarted."
         UPDATED+=("$VMID")
 
-    done < <(pct list --full 2>/dev/null | awk -v tag="$var_tag" 'NR>1 && $0 ~ tag {print $0}')
+    done < <(pct list 2>/dev/null | awk 'NR>1 {print $1}')
 
     # Summary
     echo ""
