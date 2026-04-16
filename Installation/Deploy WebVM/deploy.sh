@@ -86,17 +86,28 @@ rotate_db_password() {
             continue
         fi
 
-        # Check if /root/app/.env exists
-        if ! pct exec "$VMID" -- test -f /root/app/.env 2>/dev/null; then
-            msg_info "LXC $VMID has no /root/app/.env — skipping."
+        # Check if /root/app/.env or /root/app/.env.docker exists
+        HAS_ENV=false
+        pct exec "$VMID" -- test -f /root/app/.env 2>/dev/null && HAS_ENV=true
+        HAS_ENV_DOCKER=false
+        pct exec "$VMID" -- test -f /root/app/.env.docker 2>/dev/null && HAS_ENV_DOCKER=true
+
+        if [ "$HAS_ENV" = false ] && [ "$HAS_ENV_DOCKER" = false ]; then
+            msg_info "LXC $VMID has no /root/app/.env or .env.docker — skipping."
             SKIPPED+=("$VMID (no .env)")
             continue
         fi
 
         # Rewrite password in DATABASE_URL using sed
         msg_info "Updating DATABASE_URL in LXC $VMID..."
-        pct exec "$VMID" -- sed -i "s|\\(postgresql://$DB_USER:\\)[^@]*\\(@\\)|\\1$NEW_PASS\\2|" /root/app/.env \
-            || { msg_warn "Failed to update .env in LXC $VMID — skipping restart."; SKIPPED+=("$VMID (sed failed)"); continue; }
+        if [ "$HAS_ENV" = true ]; then
+            pct exec "$VMID" -- sed -i "s|\\(postgresql://$DB_USER:\\)[^@]*\\(@\\)|\\1$NEW_PASS\\2|" /root/app/.env \
+                || { msg_warn "Failed to update .env in LXC $VMID — skipping restart."; SKIPPED+=("$VMID (sed failed)"); continue; }
+        fi
+        if [ "$HAS_ENV_DOCKER" = true ]; then
+            pct exec "$VMID" -- sed -i "s|\\(postgresql://$DB_USER:\\)[^@]*\\(@\\)|\\1$NEW_PASS\\2|" /root/app/.env.docker \
+                || { msg_warn "Failed to update .env.docker in LXC $VMID — skipping restart."; SKIPPED+=("$VMID (sed failed)"); continue; }
+        fi
 
         # Restart docker compose
         msg_info "Restarting app in LXC $VMID..."
