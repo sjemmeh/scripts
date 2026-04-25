@@ -17,8 +17,8 @@
 #   <ip:port>    Backend target for NGINX proxy_pass, e.g. 10.0.0.25:3000
 #
 # Examples:
-#   ./add_mailcow_san.sh app.example.com 10.0.0.25:3000
-#   ./add_mailcow_san.sh status.example.com 192.168.1.50:8080
+#   ./add_mailcow_san.sh app.example.com http://10.0.0.25:3000
+#   ./add_mailcow_san.sh status.example.com https://192.168.1.50:8080
 #
 # After running:
 #   docker compose logs -f acme-mailcow
@@ -43,8 +43,8 @@ Arguments:
   ip:port    Backend target for NGINX proxy_pass
 
 Examples:
-  $0 app.example.com 10.0.0.25:3000
-  $0 status.example.com 192.168.1.50:8080
+  $0 app.example.com http://10.0.0.25:3000
+  $0 status.example.com https://192.168.1.50:8080
 EOF
 }
 
@@ -67,7 +67,7 @@ echo ""
 [ -f "$MAILCOW_CONF" ] || msg_error "mailcow.conf not found: $MAILCOW_CONF"
 [ -d "$NGINX_CONF_DIR" ] || msg_error "NGINX config directory not found: $NGINX_CONF_DIR"
 
-[[ "$BACKEND" =~ ^[A-Za-z0-9._-]+:[0-9]+$ ]] || msg_error "Backend must be in ip:port or host:port format. Got: $BACKEND"
+[[ "$BACKEND" =~ ^https?://[A-Za-z0-9._-]+:[0-9]+$ ]] || msg_error "Backend must be in http://ip:port or https://ip:port format. Got: $BACKEND"
 
 command -v docker >/dev/null 2>&1 || msg_error "docker is required."
 
@@ -94,7 +94,7 @@ server {
   include /etc/nginx/conf.d/ssl.active;
 
   location / {
-    proxy_pass http://$BACKEND;
+    proxy_pass $BACKEND;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
