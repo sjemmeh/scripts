@@ -9,7 +9,20 @@
 #     * docker image prune -af
 #
 # Usage:
-#   ./update_docker_images.sh [--config <path>] [--ct <id>] [--dry-run] [--no-prune] [--yes]
+#   ./update_docker_images.sh [options] [<ctid|hostname>]
+#
+# Options:
+#   --ct <id|hostname>   Only update this single container (by LXC id or hostname).
+#   --config <path>      Path to vm_config.conf (auto-detected by default).
+#   --dry-run            Show what would happen, do nothing.
+#   --no-prune           Skip 'docker image prune -af'.
+#   -y, --yes            Skip the initial confirmation prompt.
+#   -h, --help           Show this help.
+#
+# Examples:
+#   ./update_docker_images.sh                # all tagged containers
+#   ./update_docker_images.sh --ct 105       # only LXC 105
+#   ./update_docker_images.sh my-site        # only the LXC with hostname 'my-site'
 
 msg_info() { echo -e "\e[34m[INFO]\e[0m $1"; }
 msg_ok()   { echo -e "\e[32m[OK]\e[0m $1"; }
@@ -32,10 +45,18 @@ while [ $# -gt 0 ]; do
         --no-prune) NO_PRUNE=true; shift ;;
         -y|--yes)   ASSUME_YES=true; shift ;;
         -h|--help)
-            sed -n '2,12p' "$0"
+            sed -n '2,25p' "$0"
             exit 0
             ;;
-        *) msg_error "Unknown argument: $1" ;;
+        --) shift; ONLY_CT="$1"; shift ;;
+        -*) msg_error "Unknown argument: $1" ;;
+        *)
+            if [ -z "$ONLY_CT" ]; then
+                ONLY_CT="$1"; shift
+            else
+                msg_error "Unexpected argument: $1"
+            fi
+            ;;
     esac
 done
 
@@ -67,6 +88,7 @@ if [ -z "$var_tag" ]; then
     msg_error "Required config field 'var_tag' is not set in $CONFIG_PATH."
 fi
 msg_info "Looking for LXCs with tag: $var_tag"
+[ -n "$ONLY_CT" ] && msg_info "Restricted to: $ONLY_CT"
 
 # --- Confirm ---
 if [ "$DRY_RUN" = false ] && [ "$ASSUME_YES" = false ]; then
@@ -78,16 +100,24 @@ fi
 UPDATED=()
 UNCHANGED=()
 SKIPPED=()
+MATCHED=0
 
 # --- Iterate LXCs ---
 while IFS= read -r VMID; do
     [ -z "$VMID" ] && continue
-    [ -n "$ONLY_CT" ] && [ "$VMID" != "$ONLY_CT" ] && continue
     [ -n "$DB_LXC_ID" ] && [ "$VMID" = "$DB_LXC_ID" ] && continue
 
-    # Tag check
+    # Tag check (exact match against semicolon-separated tag list)
     TAGS=$(pct config "$VMID" 2>/dev/null | awk -F': ' '/^tags:/{print $2}')
-    if [[ "$TAGS" != *"$var_tag"* ]]; then
+    TAG_MATCH=false
+    IFS=';' read -ra TAG_LIST <<< "$TAGS"
+    for T in "${TAG_LIST[@]}"; do
+        if [ "$T" = "$var_tag" ]; then
+            TAG_MATCH=true
+            break
+        fi
+    done
+    if [ "$TAG_MATCH" = false ]; then
         continue
     fi
 
@@ -95,6 +125,13 @@ while IFS= read -r VMID; do
     HOSTNAME=$(pct config "$VMID" 2>/dev/null | awk -F': ' '/^hostname:/{print $2}')
     [ -z "$HOSTNAME" ] && HOSTNAME="ct$VMID"
     LABEL="$VMID ($HOSTNAME)"
+
+    # Restrict to a single container by id or hostname
+    if [ -n "$ONLY_CT" ] && [ "$VMID" != "$ONLY_CT" ] && [ "$HOSTNAME" != "$ONLY_CT" ]; then
+        continue
+    fi
+
+    MATCHED=$((MATCHED + 1))
 
     # Running check
     STATUS=$(pct status "$VMID" 2>/dev/null | awk '{print $2}')
@@ -182,6 +219,14 @@ done < <(pct list 2>/dev/null | awk 'NR>1 {print $1}')
 # --- Summary ---
 echo ""
 echo -e "\e[1;34m--- Summary ---\e[0m"
+if [ "$MATCHED" -eq 0 ]; then
+    if [ -n "$ONLY_CT" ]; then
+        msg_warn "No tagged LXC matched '$ONLY_CT' (id or hostname)."
+    else
+        msg_warn "No LXCs found with tag '$var_tag'."
+    fi
+    exit 1
+fi
 if [ ${#UPDATED[@]} -gt 0 ]; then
     msg_ok "Updated:   ${UPDATED[*]}"
 else
