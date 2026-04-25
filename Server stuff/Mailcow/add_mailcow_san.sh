@@ -2,19 +2,19 @@
 
 # Add a proxied hostname to mailcow NGINX and ADDITIONAL_SAN.
 # - Creates or updates a mailcow NGINX config for the requested hostname
-# - Proxies traffic for that hostname to the requested backend ip:port
+# - Proxies traffic for that hostname to the requested backend URL
 # - Validates the running nginx-mailcow configuration before restarting NGINX
 # - Adds the requested hostname to ADDITIONAL_SAN if it is not already present
 # - Runs docker compose up -d so mailcow picks up config changes
 # - Restarts acme-mailcow to request or renew the certificate
-# - Always uses /opt/mailcow as the mailcow-dockerized directory
+# - Always uses /opt/mailcow-dockerized as the mailcow-dockerized directory
 #
 # Usage:
-#   ./add_mailcow_san.sh <hostname> <ip:port>
+#   ./add_mailcow_san.sh <hostname> <backend_url>
 #
 # Arguments:
 #   <hostname>   Domain name to proxy and add to ADDITIONAL_SAN, e.g. app.example.com
-#   <ip:port>    Backend target for NGINX proxy_pass, e.g. 10.0.0.25:3000
+#   <backend_url> Backend target for NGINX proxy_pass, e.g. http://10.0.0.25:3000
 #
 # Examples:
 #   ./add_mailcow_san.sh app.example.com http://10.0.0.25:3000
@@ -32,7 +32,7 @@ msg_warn() { echo -e "\e[33m[WARN]\e[0m $1"; }
 
 usage() {
     cat <<EOF
-Usage: $0 <hostname> <ip:port>
+Usage: $0 <hostname> <backend_url>
 
 Creates or updates a mailcow NGINX proxy config, adds the hostname to
 mailcow.conf ADDITIONAL_SAN, validates NGINX syntax, and restarts the
@@ -40,7 +40,7 @@ mailcow ACME container to request the certificate.
 
 Arguments:
   hostname   Domain to proxy and add to ADDITIONAL_SAN
-  ip:port    Backend target for NGINX proxy_pass
+  backend_url  Backend target for NGINX proxy_pass, including http:// or https://
 
 Examples:
   $0 app.example.com http://10.0.0.25:3000
@@ -55,7 +55,7 @@ fi
 
 HOSTNAME="$1"
 BACKEND="$2"
-MAILCOW_DIR="/opt/mailcow"
+MAILCOW_DIR="/opt/mailcow-dockerized"
 MAILCOW_CONF="$MAILCOW_DIR/mailcow.conf"
 NGINX_CONF_DIR="$MAILCOW_DIR/data/conf/nginx"
 CONF_FILE="$NGINX_CONF_DIR/${HOSTNAME}.conf"
@@ -67,7 +67,9 @@ echo ""
 [ -f "$MAILCOW_CONF" ] || msg_error "mailcow.conf not found: $MAILCOW_CONF"
 [ -d "$NGINX_CONF_DIR" ] || msg_error "NGINX config directory not found: $NGINX_CONF_DIR"
 
-[[ "$BACKEND" =~ ^https?://[A-Za-z0-9._-]+:[0-9]+$ ]] || msg_error "Backend must be in http://ip:port or https://ip:port format. Got: $BACKEND"
+if [[ ! "$BACKEND" =~ ^(http|https)://[^[:space:]/:]+:[0-9]+$ ]]; then
+    msg_error "Backend must be in http://host:port or https://host:port format. Got: $BACKEND"
+fi
 
 command -v docker >/dev/null 2>&1 || msg_error "docker is required."
 
