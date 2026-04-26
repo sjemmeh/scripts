@@ -83,17 +83,13 @@ cd "$MAILCOW_DIR" || msg_error "Failed to enter mailcow directory: $MAILCOW_DIR"
 msg_info "Writing NGINX proxy config for $HOSTNAME..."
 cat > "$CONF_FILE" <<EOF
 server {
-  listen 80;
-  listen [::]:80;
-  listen 443 ssl http2;
-  listen [::]:443 ssl http2;
+  include /etc/nginx/conf.d/listen_plain.active;
+  include /etc/nginx/conf.d/listen_ssl.active;
 
   server_name $HOSTNAME;
 
-  include /etc/nginx/conf.d/listen_plain.active;
-  include /etc/nginx/conf.d/listen_ssl.active;
-  include /etc/nginx/conf.d/server_name.active;
-  include /etc/nginx/conf.d/ssl.active;
+  ssl_certificate /etc/ssl/mail/cert.pem;
+  ssl_certificate_key /etc/ssl/mail/key.pem;
 
   location / {
     proxy_pass $BACKEND;
