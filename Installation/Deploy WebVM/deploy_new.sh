@@ -6,6 +6,18 @@ msg_ok() { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 msg_warn() { echo -e "\e[33m[WARN]\e[0m $1"; }
 
+# Function to find the first available port starting from a base
+find_free_port() {
+    local port=$1
+    # Check if the port is in use via 'ss'. 
+    # If ss returns 0 (found), we increment and try again.
+    while ss -tuln | grep -q ":$port "; do
+        msg_warn "Port $port is in use, checking next..."
+        ((port++))
+    done
+    echo "$port"
+}
+
 echo -e "\e[1;34m--- RHEL Podman Web-App-Deployer (Rootless) ---\e[0m"
 echo ""
 
@@ -22,7 +34,6 @@ else
     msg_error "vm_config.conf not found next to script. Create it first."
 fi
 
-# Validate required config fields (Now includes DB vars)
 REQUIRED_VARS=(DOCKER_USERNAME DOCKER_PASSWORD DOCKER_IMAGE DB_HOST DB_USER DB_PASS)
 for VAR in "${REQUIRED_VARS[@]}"; do
     if [ -z "${!VAR}" ]; then
@@ -30,15 +41,16 @@ for VAR in "${REQUIRED_VARS[@]}"; do
     fi
 done
 
-# --- 2. Gather Inputs ---
+# --- 2. Gather Inputs & Auto-assign Port ---
 read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
 if [ -z "$CUSTOMER_NAME" ]; then msg_error "Customer name cannot be empty."; fi
 
-read -p "Enter Target Port (e.g., 3000): " APP_PORT
-if [[ ! "$APP_PORT" =~ ^[0-9]+$ ]]; then msg_error "Port must be a number."; fi
+msg_info "Finding an available port starting from 3005..."
+APP_PORT=$(find_free_port 3000)
+msg_ok "Assigning Port: $APP_PORT"
 
 read -p "Enter Database Name (e.g., ${CUSTOMER_NAME//-/_}_db): " DB_NAME
-if [ -z "$DB_NAME" ]; then msg_error "Database name cannot be empty."; fi
+if [ -z "$DB_NAME" ]; then DB_NAME="${CUSTOMER_NAME//-/_}_db"; fi
 
 # --- 3. Create System User & Enable Linger ---
 if id "$CUSTOMER_NAME" &>/dev/null; then
