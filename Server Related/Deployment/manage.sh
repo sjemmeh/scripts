@@ -12,6 +12,7 @@ find_free_port() {
     while ss -tuln | grep -q ":$port "; do
         msg_warn "Port $port is in use, checking next..."
         ((port++))
+        [ "$port" -gt 65535 ] && msg_error "No available ports found in range $1-65535."
     done
     echo "$port"
 }
