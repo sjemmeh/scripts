@@ -79,7 +79,7 @@ for user in "${USERS[@]}"; do
 
     if [ ! -d "$USER_HOME" ]; then
         msg_warn "Home directory for '$user' does not exist at $USER_HOME — skipping."
-        ((SKIPPED++))
+        SKIPPED=$((SKIPPED + 1))
         continue
     fi
 
