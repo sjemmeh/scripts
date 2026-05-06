@@ -88,3 +88,55 @@ services:
       - "\${PORT}:\${PORT}"
 EOF
 }
+
+configure_bashrc() {
+    local cust_home="$1"
+    msg_info "Configuring .bashrc for rootless podman..."
+    if ! grep -q "DOCKER_HOST" "$cust_home/.bashrc"; then
+        cat <<EOF >> "$cust_home/.bashrc"
+
+# Podman Rootless Environment
+export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
+EOF
+    fi
+}
+
+stop_container() {
+    local name="$1"
+    msg_info "Stopping container for user '$name'..."
+    su - "$name" -c "
+        export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
+        cd ~/app && docker-compose down
+    " && msg_ok "Container stopped." || msg_warn "Could not stop container (may not have been running)."
+}
+
+start_container() {
+    local name="$1"
+    local pull="${2:-}"
+    local pull_cmd=""
+    [ "$pull" = "pull" ] && pull_cmd="docker-compose pull"
+    msg_info "Authenticating to Docker Hub and starting container as $name..."
+    su - "$name" -c "
+        export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
+        systemctl --user enable --now podman.socket
+        echo \"$DOCKER_PASSWORD\" | podman login docker.io -u \"$DOCKER_USERNAME\" --password-stdin
+        mkdir -p ~/.docker
+        sed 's|\"docker.io\"|\"https://index.docker.io/v1/\"|' \${XDG_RUNTIME_DIR}/containers/auth.json > ~/.docker/config.json
+        cd ~/app
+        $pull_cmd
+        docker-compose up -d
+    " || msg_error "Failed to start the container application."
+}
+
+print_manage_hint() {
+    local name="$1"
+    echo "---------------------------------------------------"
+    echo "To manage this container, log in as the user:"
+    echo "  sudo su - $name"
+    echo "  cd ~/app"
+    echo "  docker-compose logs -f"
+    echo "---------------------------------------------------"
+}
