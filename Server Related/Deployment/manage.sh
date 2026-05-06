@@ -199,8 +199,12 @@ start_container() {
     local pull_cmd=""
     [ "$pull" = "pull" ] && pull_cmd="docker-compose pull"
     msg_info "Authenticating to Docker Hub and starting container as $name..."
+    local uid
+    uid=$(id -u "$name")
+    systemctl start "user@${uid}.service" || msg_error "Failed to start systemd user instance for $name."
     su - "$name" -c "
         export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus
         export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
         systemctl --user enable --now podman.socket
         echo \"$DOCKER_PASSWORD\" | podman login docker.io -u \"$DOCKER_USERNAME\" --password-stdin
@@ -235,11 +239,12 @@ mode_deploy() {
     read -p "Enter Database Name (default: ${CUSTOMER_NAME//-/_}_db): " DB_NAME
     [ -z "$DB_NAME" ] && DB_NAME="${CUSTOMER_NAME//-/_}_db"
 
+    create_user "$CUSTOMER_NAME"
+
     local CUST_HOME
     CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
     local APP_DIR="$CUST_HOME/app"
 
-    create_user "$CUSTOMER_NAME"
     open_firewall_port "$APP_PORT"
 
     msg_info "Creating application directory structure..."
@@ -280,11 +285,12 @@ mode_restore_new() {
     read -p "Enter full path to backup tar.gz (e.g., /tmp/backup.tar.gz): " BACKUP_FILE
     [ ! -f "$BACKUP_FILE" ] && msg_error "Backup file not found at $BACKUP_FILE"
 
+    create_user "$CUSTOMER_NAME"
+
     local CUST_HOME
     CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
     local APP_DIR="$CUST_HOME/app"
 
-    create_user "$CUSTOMER_NAME"
     open_firewall_port "$APP_PORT"
 
     msg_info "Creating application directory..."
@@ -356,20 +362,25 @@ mode_create_user() {
     APP_PORT=$(find_free_port 3000)
     msg_ok "Assigning Port: $APP_PORT"
 
+    create_user "$CUSTOMER_NAME"
+
     local CUST_HOME
     CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
 
-    create_user "$CUSTOMER_NAME"
     open_firewall_port "$APP_PORT"
     configure_bashrc "$CUST_HOME"
     register_port "$CUSTOMER_NAME" "$APP_PORT"
 
     msg_info "Enabling podman socket for $CUSTOMER_NAME..."
+    local uid
+    uid=$(id -u "$CUSTOMER_NAME")
+    systemctl start "user@${uid}.service" || msg_warn "Could not start systemd user instance — podman socket will start on next login."
     su - "$CUSTOMER_NAME" -c "
         export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus
         export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
         systemctl --user enable --now podman.socket
-    " || msg_warn "Could not start podman socket now — it will start on next login."
+    " || msg_warn "Could not enable podman socket — it will start on next login."
 
     echo ""
     echo -e "\e[1;34m--- User Created ---\e[0m"
