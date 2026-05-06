@@ -6,6 +6,8 @@ msg_ok()    { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_error() { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 msg_warn()  { echo -e "\e[33m[WARN]\e[0m $1"; }
 
+REGISTRY_FILE="/root/.config/webvm/ports"
+
 # --- Helpers ---
 find_free_port() {
     local port=$1
@@ -15,6 +17,33 @@ find_free_port() {
         [ "$port" -gt 65535 ] && msg_error "No available ports found in range $1-65535."
     done
     echo "$port"
+}
+
+register_port() {
+    local name="$1" port="$2"
+    mkdir -p "$(dirname "$REGISTRY_FILE")"
+    touch "$REGISTRY_FILE"
+    sed -i "/^${name} /d" "$REGISTRY_FILE"
+    echo "$name $port" >> "$REGISTRY_FILE"
+}
+
+unregister_port() {
+    local name="$1"
+    [ -f "$REGISTRY_FILE" ] && sed -i "/^${name} /d" "$REGISTRY_FILE"
+}
+
+lookup_port() {
+    local name="$1"
+    [ -f "$REGISTRY_FILE" ] || { echo ""; return; }
+    grep "^${name} " "$REGISTRY_FILE" | awk '{print $2}' | head -1
+}
+
+close_firewall_port() {
+    local port="$1"
+    msg_info "Closing port $port/tcp in firewalld..."
+    firewall-cmd --permanent --remove-port="${port}/tcp" >/dev/null 2>&1 || msg_error "Failed to remove port $port from firewall."
+    firewall-cmd --reload >/dev/null 2>&1 || msg_error "Failed to reload firewall."
+    msg_ok "Firewall updated."
 }
 
 load_config() {
