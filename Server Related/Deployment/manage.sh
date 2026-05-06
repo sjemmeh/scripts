@@ -374,6 +374,40 @@ mode_create_user() {
     echo "---------------------------------------------------"
 }
 
+mode_remove() {
+    echo ""
+    select_any_user
+
+    local APP_PORT
+    APP_PORT=$(lookup_port "$CUSTOMER_NAME")
+
+    echo ""
+    msg_warn "This will permanently remove user '$CUSTOMER_NAME' and all their data."
+    read -p "Type the username to confirm: " CONFIRM
+    [ "$CONFIRM" != "$CUSTOMER_NAME" ] && msg_error "Confirmation does not match. Aborting."
+
+    msg_info "Killing all processes for $CUSTOMER_NAME..."
+    loginctl kill-user "$CUSTOMER_NAME" 2>/dev/null || true
+
+    msg_info "Disabling systemd linger for $CUSTOMER_NAME..."
+    loginctl disable-linger "$CUSTOMER_NAME" 2>/dev/null || \
+        msg_warn "Could not disable linger (may not have been enabled)."
+
+    if [ -n "$APP_PORT" ]; then
+        close_firewall_port "$APP_PORT"
+        unregister_port "$CUSTOMER_NAME"
+    else
+        msg_warn "No port registered for '$CUSTOMER_NAME'. Skipping firewall cleanup."
+    fi
+
+    msg_info "Deleting user account and home directory..."
+    userdel -r -f "$CUSTOMER_NAME" || msg_error "Failed to delete user $CUSTOMER_NAME."
+
+    echo ""
+    echo -e "\e[1;34m--- User Removed ---\e[0m"
+    msg_ok "User $CUSTOMER_NAME has been completely removed."
+}
+
 mode_backup() {
     echo ""
     select_webvm_user
