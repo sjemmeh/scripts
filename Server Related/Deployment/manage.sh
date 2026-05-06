@@ -11,7 +11,7 @@ REGISTRY_FILE="/root/.config/webvm/ports"
 # --- Helpers ---
 find_free_port() {
     local port=$1
-    while ss -tuln | grep -q ":$port "; do
+    while ss -tuln | grep -q ":$port " || grep -q " ${port}$" "$REGISTRY_FILE" 2>/dev/null; do
         msg_warn "Port $port is in use, checking next..."
         ((port++))
         [ "$port" -gt 65535 ] && msg_error "No available ports found in range $1-65535."
