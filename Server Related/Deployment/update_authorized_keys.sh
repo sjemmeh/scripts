@@ -8,9 +8,8 @@ msg_ok()   { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_error(){ echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 msg_warn() { echo -e "\e[33m[WARN]\e[0m $1"; }
 
-# Determine the directory where this script resides
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/vm_config.conf"
+# --- Configuration ---
+AUTHORIZED_KEYS_URL="${AUTHORIZED_KEYS_URL:-https://dehaas-digital.nl/static/authorized_keys}"
 
 echo -e "\e[1;34m--- Update Authorized SSH Keys ---\e[0m"
 echo ""
@@ -18,19 +17,6 @@ echo ""
 # --- Root Guard ---
 if [ "$EUID" -ne 0 ]; then
     msg_error "This script must be run as root to update authorized_keys for all users."
-fi
-
-# --- Load Config ---
-if [ -f "$CONFIG_FILE" ]; then
-    # shellcheck source=./vm_config.conf
-    source "$CONFIG_FILE"
-    msg_info "Loaded config from $CONFIG_FILE"
-else
-    msg_error "Config file not found at $CONFIG_FILE."
-fi
-
-if [ -z "${AUTHORIZED_KEYS_URL:-}" ]; then
-    msg_error "Required config field 'AUTHORIZED_KEYS_URL' is not set in vm_config.conf."
 fi
 
 # --- Fetch Remote Authorized Keys ---
