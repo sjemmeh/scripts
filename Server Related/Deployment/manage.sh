@@ -16,3 +16,18 @@ find_free_port() {
     done
     echo "$port"
 }
+
+load_config() {
+    if [ -f "./vm_config.conf" ]; then
+        source ./vm_config.conf
+        msg_ok "Loaded vm_config.conf"
+    else
+        msg_error "vm_config.conf not found next to script. Create it first."
+    fi
+    local required=(DOCKER_USERNAME DOCKER_PASSWORD DOCKER_IMAGE DB_HOST DB_USER DB_PASS)
+    for VAR in "${required[@]}"; do
+        if [ -z "${!VAR}" ]; then
+            msg_error "Required config field '$VAR' is not set in vm_config.conf."
+        fi
+    done
+}
