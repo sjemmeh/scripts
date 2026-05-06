@@ -52,3 +52,39 @@ open_firewall_port() {
     firewall-cmd --reload >/dev/null 2>&1 || msg_error "Failed to reload firewall."
     msg_ok "Firewall updated."
 }
+
+write_env() {
+    local app_dir="$1" customer_name="$2" port="$3" db_name="$4"
+    local database_url="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:5432/${db_name}"
+    msg_info "Generating .env file..."
+    cat <<EOF > "$app_dir/.env"
+PROJECT_NAME=$customer_name
+PORT=$port
+DATABASE_URL="$database_url"
+EOF
+}
+
+write_compose() {
+    local app_dir="$1"
+    msg_info "Generating docker-compose.yml..."
+    cat <<EOF > "$app_dir/docker-compose.yml"
+services:
+  service-backend:
+    container_name: \${PROJECT_NAME}
+    image: $DOCKER_IMAGE
+    pull_policy: always
+    volumes:
+      - ./themes:/app/storage/themes:Z
+      - ./plugins:/app/storage/plugins:Z
+      - ./uploads:/app/storage/uploads:Z
+      - ./logs:/app/storage/logs:Z
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - STORAGE_PATH=/app/storage
+    restart: unless-stopped
+    ports:
+      - "\${PORT}:\${PORT}"
+EOF
+}
