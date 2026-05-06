@@ -31,3 +31,24 @@ load_config() {
         fi
     done
 }
+
+create_user() {
+    local name="$1"
+    if id "$name" &>/dev/null; then
+        msg_warn "User $name already exists. Skipping user creation."
+    else
+        msg_info "Creating user '$name'..."
+        useradd -m "$name" || msg_error "Failed to create user."
+        msg_ok "User created."
+    fi
+    msg_info "Enabling systemd linger for $name..."
+    loginctl enable-linger "$name" || msg_error "Failed to enable linger."
+}
+
+open_firewall_port() {
+    local port="$1"
+    msg_info "Opening port $port/tcp in firewalld..."
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1
+    firewall-cmd --reload >/dev/null 2>&1
+    msg_ok "Firewall updated."
+}
