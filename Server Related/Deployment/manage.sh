@@ -287,3 +287,28 @@ mode_restore_existing() {
     msg_ok "Backup:   $BACKUP_FILE"
     print_manage_hint "$CUSTOMER_NAME"
 }
+
+# --- Entry Point ---
+echo -e "\e[1;34m--- RHEL Podman Web-App Manager (Rootless) ---\e[0m"
+echo ""
+
+if [ "$EUID" -ne 0 ]; then
+    msg_error "This script must be run as root to create users and configure the firewall."
+fi
+
+load_config
+
+echo ""
+echo "Select operation:"
+echo "  1) Deploy new customer"
+echo "  2) Restore to new customer (from backup)"
+echo "  3) Restore existing customer (from backup)"
+echo ""
+read -p "Enter choice [1/2/3]: " OPERATION
+
+case "$OPERATION" in
+    1) mode_deploy ;;
+    2) mode_restore_new ;;
+    3) mode_restore_existing ;;
+    *) msg_error "Invalid choice. Enter 1, 2, or 3." ;;
+esac
