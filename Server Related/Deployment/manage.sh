@@ -347,6 +347,33 @@ mode_restore_existing() {
     print_manage_hint "$CUSTOMER_NAME"
 }
 
+mode_create_user() {
+    echo ""
+    read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
+    [ -z "$CUSTOMER_NAME" ] && msg_error "Customer name cannot be empty."
+
+    msg_info "Finding an available port starting from 3000..."
+    APP_PORT=$(find_free_port 3000)
+    msg_ok "Assigning Port: $APP_PORT"
+
+    local CUST_HOME
+    CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
+
+    create_user "$CUSTOMER_NAME"
+    open_firewall_port "$APP_PORT"
+    configure_bashrc "$CUST_HOME"
+    register_port "$CUSTOMER_NAME" "$APP_PORT"
+
+    echo ""
+    echo -e "\e[1;34m--- User Created ---\e[0m"
+    msg_ok "Customer: $CUSTOMER_NAME"
+    msg_ok "Port:     $APP_PORT"
+    echo "---------------------------------------------------"
+    echo "Log in as the user to set up your custom app:"
+    echo "  sudo su - $CUSTOMER_NAME"
+    echo "---------------------------------------------------"
+}
+
 # --- Entry Point ---
 echo -e "\e[1;34m--- RHEL Podman Web-App Manager (Rootless) ---\e[0m"
 echo ""
