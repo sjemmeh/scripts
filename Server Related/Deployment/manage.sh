@@ -374,6 +374,22 @@ mode_create_user() {
     echo "---------------------------------------------------"
 }
 
+mode_backup() {
+    echo ""
+    select_webvm_user
+
+    local BACKUP_FILE="/tmp/${CUSTOMER_NAME}-backup.tar.gz"
+    local APP_DIR="/home/$CUSTOMER_NAME/app"
+
+    msg_info "Creating backup of $APP_DIR..."
+    tar -czf "$BACKUP_FILE" -C "$APP_DIR" themes plugins uploads logs || msg_error "Failed to create backup archive."
+
+    echo ""
+    echo -e "\e[1;34m--- Backup Complete ---\e[0m"
+    msg_ok "Customer: $CUSTOMER_NAME"
+    msg_ok "Backup:   $BACKUP_FILE"
+}
+
 # --- Entry Point ---
 echo -e "\e[1;34m--- RHEL Podman Web-App Manager (Rootless) ---\e[0m"
 echo ""
