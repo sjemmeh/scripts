@@ -102,7 +102,7 @@ for user in "${USERS[@]}"; do
     if [ -f "$AUTH_KEYS_FILE" ]; then
         EXISTING_KEYS=$(cat "$AUTH_KEYS_FILE")
         if [ "$EXISTING_KEYS" = "$REMOTE_KEYS" ]; then
-            ((ALREADY_OK++))
+            ALREADY_OK=$((ALREADY_OK + 1))
             # Defensive: still fix permissions/ownership
             chmod 600 "$AUTH_KEYS_FILE" 2>/dev/null || true
             chown "$user:$user" "$AUTH_KEYS_FILE" 2>/dev/null || true
@@ -115,7 +115,7 @@ for user in "${USERS[@]}"; do
     chmod 600 "$AUTH_KEYS_FILE"
     chown "$user:$user" "$AUTH_KEYS_FILE"
     msg_ok "Updated authorized_keys for $user"
-    ((UPDATED++))
+    UPDATED=$((UPDATED + 1))
 done
 
 # --- Summary ---
