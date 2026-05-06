@@ -426,6 +426,35 @@ mode_remove() {
     msg_ok "User $CUSTOMER_NAME has been completely removed."
 }
 
+mode_sync_registry() {
+    echo ""
+    msg_info "Scanning /home/*/app/.env for unregistered ports..."
+    local count=0
+    for env_file in /home/*/app/.env; do
+        [ -f "$env_file" ] || continue
+        local name
+        name=$(echo "$env_file" | cut -d/ -f3)
+        local port
+        port=$(grep -m1 "^PORT=" "$env_file" | cut -d= -f2)
+        [ -z "$port" ] && continue
+        local existing
+        existing=$(lookup_port "$name")
+        if [ -z "$existing" ]; then
+            register_port "$name" "$port"
+            msg_ok "Registered: $name → $port"
+            (( count++ ))
+        else
+            msg_info "Already registered: $name → $existing (skipped)"
+        fi
+    done
+    echo ""
+    if [ "$count" -eq 0 ]; then
+        msg_ok "Registry already up to date."
+    else
+        msg_ok "$count entry/entries added."
+    fi
+}
+
 mode_backup() {
     echo ""
     select_webvm_user
@@ -458,8 +487,9 @@ echo "  3) Restore existing customer (from backup)"
 echo "  4) Create user (no app)"
 echo "  5) Backup customer"
 echo "  6) Remove customer"
+echo "  7) Sync port registry"
 echo ""
-read -p "Enter choice [1-6]: " OPERATION
+read -p "Enter choice [1-7]: " OPERATION
 
 case "$OPERATION" in
     1) mode_deploy ;;
@@ -468,5 +498,6 @@ case "$OPERATION" in
     4) mode_create_user ;;
     5) mode_backup ;;
     6) mode_remove ;;
-    *) msg_error "Invalid choice. Enter 1-6." ;;
+    7) mode_sync_registry ;;
+    *) msg_error "Invalid choice. Enter 1-7." ;;
 esac
