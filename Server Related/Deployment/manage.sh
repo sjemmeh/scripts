@@ -140,3 +140,43 @@ print_manage_hint() {
     echo "  docker-compose logs -f"
     echo "---------------------------------------------------"
 }
+
+mode_deploy() {
+    echo ""
+    read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
+    [ -z "$CUSTOMER_NAME" ] && msg_error "Customer name cannot be empty."
+
+    msg_info "Finding an available port starting from 3000..."
+    APP_PORT=$(find_free_port 3000)
+    msg_ok "Assigning Port: $APP_PORT"
+
+    read -p "Enter Database Name (default: ${CUSTOMER_NAME//-/_}_db): " DB_NAME
+    [ -z "$DB_NAME" ] && DB_NAME="${CUSTOMER_NAME//-/_}_db"
+
+    local CUST_HOME
+    CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
+    local APP_DIR="$CUST_HOME/app"
+
+    create_user "$CUSTOMER_NAME"
+    open_firewall_port "$APP_PORT"
+
+    msg_info "Creating application directory structure..."
+    su - "$CUSTOMER_NAME" -c "mkdir -p ~/app/{themes,plugins,uploads,logs}"
+
+    write_env "$APP_DIR" "$CUSTOMER_NAME" "$APP_PORT" "$DB_NAME"
+    write_compose "$APP_DIR"
+
+    msg_info "Setting correct ownership..."
+    chown -R "$CUSTOMER_NAME:$CUSTOMER_NAME" "$APP_DIR"
+
+    configure_bashrc "$CUST_HOME"
+    start_container "$CUSTOMER_NAME"
+
+    echo ""
+    echo -e "\e[1;34m--- Deployment Complete ---\e[0m"
+    msg_ok "Customer: $CUSTOMER_NAME"
+    msg_ok "Port:     $APP_PORT"
+    msg_ok "Database: $DB_NAME"
+    msg_ok "Image:    $DOCKER_IMAGE"
+    print_manage_hint "$CUSTOMER_NAME"
+}
