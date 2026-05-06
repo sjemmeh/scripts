@@ -48,7 +48,7 @@ create_user() {
 open_firewall_port() {
     local port="$1"
     msg_info "Opening port $port/tcp in firewalld..."
-    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1
-    firewall-cmd --reload >/dev/null 2>&1
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null 2>&1 || msg_error "Failed to add port $port to firewall."
+    firewall-cmd --reload >/dev/null 2>&1 || msg_error "Failed to reload firewall."
     msg_ok "Firewall updated."
 }
