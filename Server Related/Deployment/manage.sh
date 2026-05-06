@@ -364,6 +364,13 @@ mode_create_user() {
     configure_bashrc "$CUST_HOME"
     register_port "$CUSTOMER_NAME" "$APP_PORT"
 
+    msg_info "Enabling podman socket for $CUSTOMER_NAME..."
+    su - "$CUSTOMER_NAME" -c "
+        export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
+        systemctl --user enable --now podman.socket
+    " || msg_warn "Could not start podman socket now — it will start on next login."
+
     echo ""
     echo -e "\e[1;34m--- User Created ---\e[0m"
     msg_ok "Customer: $CUSTOMER_NAME"
