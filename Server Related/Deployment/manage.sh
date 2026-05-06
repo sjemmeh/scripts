@@ -46,6 +46,58 @@ close_firewall_port() {
     msg_ok "Firewall updated."
 }
 
+select_webvm_user() {
+    msg_info "Scanning for existing WebVM users..."
+    local users=()
+    local user
+    for user_home in /home/*/; do
+        [ -d "$user_home" ] || continue
+        user=$(basename "$user_home")
+        [ -d "$user_home/app" ] && users+=("$user")
+    done
+    [ ${#users[@]} -eq 0 ] && msg_error "No existing WebVM users found (no /home/<user>/app directory)."
+    echo ""
+    echo "Existing WebVM users:"
+    for i in "${!users[@]}"; do
+        echo "  $((i+1))) ${users[$i]}"
+    done
+    echo ""
+    local choice
+    read -p "Select user [1-${#users[@]}]: " choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || \
+       [ "$choice" -lt 1 ] || \
+       [ "$choice" -gt "${#users[@]}" ]; then
+        msg_error "Invalid selection."
+    fi
+    CUSTOMER_NAME="${users[$((choice-1))]}"
+}
+
+select_any_user() {
+    msg_info "Scanning for users..."
+    local users=()
+    local user
+    for user_home in /home/*/; do
+        [ -d "$user_home" ] || continue
+        user=$(basename "$user_home")
+        users+=("$user")
+    done
+    [ ${#users[@]} -eq 0 ] && msg_error "No users found in /home."
+    echo ""
+    echo "Users:"
+    for i in "${!users[@]}"; do
+        echo "  $((i+1))) ${users[$i]}"
+    done
+    echo ""
+    local choice
+    read -p "Select user [1-${#users[@]}]: " choice
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || \
+       [ "$choice" -lt 1 ] || \
+       [ "$choice" -gt "${#users[@]}" ]; then
+        msg_error "Invalid selection."
+    fi
+    CUSTOMER_NAME="${users[$((choice-1))]}"
+}
+
 load_config() {
     if [ -f "./vm_config.conf" ]; then
         source ./vm_config.conf
