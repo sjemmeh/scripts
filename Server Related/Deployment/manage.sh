@@ -227,3 +227,63 @@ mode_restore_new() {
     msg_ok "Backup:   $BACKUP_FILE"
     print_manage_hint "$CUSTOMER_NAME"
 }
+
+mode_restore_existing() {
+    echo ""
+    msg_info "Scanning for existing WebVM users..."
+
+    local WEBVM_USERS=()
+    local user
+    for user_home in /home/*/; do
+        [ -d "$user_home" ] || continue
+        user=$(basename "$user_home")
+        [ -d "$user_home/app" ] && WEBVM_USERS+=("$user")
+    done
+
+    [ ${#WEBVM_USERS[@]} -eq 0 ] && \
+        msg_error "No existing WebVM users found (no /home/<user>/app directory)."
+
+    echo ""
+    echo "Existing WebVM users:"
+    for i in "${!WEBVM_USERS[@]}"; do
+        echo "  $((i+1))) ${WEBVM_USERS[$i]}"
+    done
+    echo ""
+
+    read -p "Select user [1-${#WEBVM_USERS[@]}]: " USER_CHOICE
+    if ! [[ "$USER_CHOICE" =~ ^[0-9]+$ ]] || \
+       [ "$USER_CHOICE" -lt 1 ] || \
+       [ "$USER_CHOICE" -gt "${#WEBVM_USERS[@]}" ]; then
+        msg_error "Invalid selection."
+    fi
+
+    local CUSTOMER_NAME="${WEBVM_USERS[$((USER_CHOICE-1))]}"
+    local CUST_HOME
+    CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
+    local APP_DIR="$CUST_HOME/app"
+
+    read -p "Enter full path to backup tar.gz (e.g., /tmp/backup.tar.gz): " BACKUP_FILE
+    [ ! -f "$BACKUP_FILE" ] && msg_error "Backup file not found at $BACKUP_FILE"
+
+    stop_container "$CUSTOMER_NAME"
+
+    echo ""
+    msg_info "Removing existing app directory..."
+    rm -rf "$APP_DIR"
+    mkdir -p "$APP_DIR"
+
+    msg_info "Extracting backup archive to $APP_DIR..."
+    tar -xzf "$BACKUP_FILE" -C "$APP_DIR" || msg_error "Failed to extract archive."
+    msg_ok "Extraction complete."
+
+    msg_info "Setting correct ownership..."
+    chown -R "$CUSTOMER_NAME:$CUSTOMER_NAME" "$APP_DIR"
+
+    start_container "$CUSTOMER_NAME"
+
+    echo ""
+    echo -e "\e[1;34m--- Restore Complete ---\e[0m"
+    msg_ok "Customer: $CUSTOMER_NAME"
+    msg_ok "Backup:   $BACKUP_FILE"
+    print_manage_hint "$CUSTOMER_NAME"
+}
