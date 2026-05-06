@@ -437,12 +437,18 @@ echo "Select operation:"
 echo "  1) Deploy new customer"
 echo "  2) Restore to new customer (from backup)"
 echo "  3) Restore existing customer (from backup)"
+echo "  4) Create user (no app)"
+echo "  5) Backup customer"
+echo "  6) Remove customer"
 echo ""
-read -p "Enter choice [1/2/3]: " OPERATION
+read -p "Enter choice [1-6]: " OPERATION
 
 case "$OPERATION" in
     1) mode_deploy ;;
     2) mode_restore_new ;;
     3) mode_restore_existing ;;
-    *) msg_error "Invalid choice. Enter 1, 2, or 3." ;;
+    4) mode_create_user ;;
+    5) mode_backup ;;
+    6) mode_remove ;;
+    *) msg_error "Invalid choice. Enter 1-6." ;;
 esac
