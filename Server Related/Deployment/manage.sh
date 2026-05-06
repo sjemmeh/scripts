@@ -180,3 +180,50 @@ mode_deploy() {
     msg_ok "Image:    $DOCKER_IMAGE"
     print_manage_hint "$CUSTOMER_NAME"
 }
+
+mode_restore_new() {
+    echo ""
+    read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
+    [ -z "$CUSTOMER_NAME" ] && msg_error "Customer name cannot be empty."
+
+    msg_info "Finding an available port starting from 3000..."
+    APP_PORT=$(find_free_port 3000)
+    msg_ok "Assigning Port: $APP_PORT"
+
+    read -p "Enter Database Name (default: ${CUSTOMER_NAME//-/_}_db): " DB_NAME
+    [ -z "$DB_NAME" ] && DB_NAME="${CUSTOMER_NAME//-/_}_db"
+
+    read -p "Enter full path to backup tar.gz (e.g., /tmp/backup.tar.gz): " BACKUP_FILE
+    [ ! -f "$BACKUP_FILE" ] && msg_error "Backup file not found at $BACKUP_FILE"
+
+    local CUST_HOME
+    CUST_HOME=$(eval echo "~$CUSTOMER_NAME")
+    local APP_DIR="$CUST_HOME/app"
+
+    create_user "$CUSTOMER_NAME"
+    open_firewall_port "$APP_PORT"
+
+    msg_info "Creating application directory..."
+    mkdir -p "$APP_DIR"
+
+    msg_info "Extracting backup archive to $APP_DIR..."
+    tar -xzf "$BACKUP_FILE" -C "$APP_DIR" || msg_error "Failed to extract archive."
+    msg_ok "Extraction complete."
+
+    write_env "$APP_DIR" "$CUSTOMER_NAME" "$APP_PORT" "$DB_NAME"
+    write_compose "$APP_DIR"
+
+    msg_info "Setting correct ownership..."
+    chown -R "$CUSTOMER_NAME:$CUSTOMER_NAME" "$APP_DIR"
+
+    configure_bashrc "$CUST_HOME"
+    start_container "$CUSTOMER_NAME" "pull"
+
+    echo ""
+    echo -e "\e[1;34m--- Restore Complete ---\e[0m"
+    msg_ok "Customer: $CUSTOMER_NAME"
+    msg_ok "Port:     $APP_PORT"
+    msg_ok "Database: $DB_NAME"
+    msg_ok "Backup:   $BACKUP_FILE"
+    print_manage_hint "$CUSTOMER_NAME"
+}
