@@ -223,6 +223,7 @@ print_manage_hint() {
 }
 
 mode_deploy() {
+    load_config
     echo ""
     read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
     [ -z "$CUSTOMER_NAME" ] && msg_error "Customer name cannot be empty."
@@ -252,6 +253,7 @@ mode_deploy() {
 
     configure_bashrc "$CUST_HOME"
     start_container "$CUSTOMER_NAME"
+    register_port "$CUSTOMER_NAME" "$APP_PORT"
 
     echo ""
     echo -e "\e[1;34m--- Deployment Complete ---\e[0m"
@@ -263,6 +265,7 @@ mode_deploy() {
 }
 
 mode_restore_new() {
+    load_config
     echo ""
     read -p "Enter Customer/User Name (e.g., dehaas-digital): " CUSTOMER_NAME
     [ -z "$CUSTOMER_NAME" ] && msg_error "Customer name cannot be empty."
@@ -299,6 +302,7 @@ mode_restore_new() {
 
     configure_bashrc "$CUST_HOME"
     start_container "$CUSTOMER_NAME" "pull"
+    register_port "$CUSTOMER_NAME" "$APP_PORT"
 
     echo ""
     echo -e "\e[1;34m--- Restore Complete ---\e[0m"
@@ -350,8 +354,6 @@ echo ""
 if [ "$EUID" -ne 0 ]; then
     msg_error "This script must be run as root to create users and configure the firewall."
 fi
-
-load_config
 
 echo ""
 echo "Select operation:"
