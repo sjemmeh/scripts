@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 # --- Internal Logging Functions ---
@@ -75,11 +74,11 @@ for user in "${USERS[@]}"; do
         msg_info "Creating $SSH_DIR for $user ..."
         mkdir -p "$SSH_DIR"
         chmod 700 "$SSH_DIR"
-        chown "$user:$user" "$SSH_DIR"
+        [ "$user" != "root" ] && chown "$user:$user" "$SSH_DIR"
     else
         # Defensive: fix permissions if wrong
         chmod 700 "$SSH_DIR" 2>/dev/null || true
-        chown "$user:$user" "$SSH_DIR" 2>/dev/null || true
+        [ "$user" != "root" ] && chown "$user:$user" "$SSH_DIR" 2>/dev/null || true
     fi
 
     AUTH_KEYS_FILE="$SSH_DIR/authorized_keys"
@@ -91,7 +90,7 @@ for user in "${USERS[@]}"; do
             ALREADY_OK=$((ALREADY_OK + 1))
             # Defensive: still fix permissions/ownership
             chmod 600 "$AUTH_KEYS_FILE" 2>/dev/null || true
-            chown "$user:$user" "$AUTH_KEYS_FILE" 2>/dev/null || true
+            [ "$user" != "root" ] && chown "$user:$user" "$AUTH_KEYS_FILE" 2>/dev/null || true
             continue
         fi
     fi
@@ -99,7 +98,7 @@ for user in "${USERS[@]}"; do
     # Write new keys
     echo "$REMOTE_KEYS" > "$AUTH_KEYS_FILE"
     chmod 600 "$AUTH_KEYS_FILE"
-    chown "$user:$user" "$AUTH_KEYS_FILE"
+    [ "$user" != "root" ] && chown "$user:$user" "$AUTH_KEYS_FILE"
     msg_ok "Updated authorized_keys for $user"
     UPDATED=$((UPDATED + 1))
 done
