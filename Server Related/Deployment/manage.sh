@@ -513,7 +513,7 @@ mode_update_customer_images() {
         fi
 
         write_compose "$app_dir"
-        start_container "$name" "pull"
+        start_container "$name"
         msg_ok "Updated customer image: $name"
         (( updated++ ))
     done < "$REGISTRY_FILE"

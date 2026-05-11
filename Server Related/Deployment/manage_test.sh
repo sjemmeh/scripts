@@ -34,7 +34,7 @@ test_update_all_customers_skips_standalone_apps() {
 
     UPDATED_CUSTOMERS=()
     start_container() {
-        UPDATED_CUSTOMERS+=("$1:$2")
+        UPDATED_CUSTOMERS+=("$1:${2:-}")
     }
 
     write_compose() {
@@ -52,7 +52,7 @@ test_update_all_customers_skips_standalone_apps() {
     mode_update_customer_images
 
     [ "${#UPDATED_CUSTOMERS[@]}" -eq 1 ] || fail "expected one customer update, got ${#UPDATED_CUSTOMERS[@]}"
-    [ "${UPDATED_CUSTOMERS[0]}" = "acme:pull" ] || fail "expected acme to be updated with pull"
+    [ "${UPDATED_CUSTOMERS[0]}" = "acme:" ] || fail "expected acme to restart without explicit pull"
     [ ! -f "$TMP_DIR/home/landing-page/app/docker-compose.yml" ] || fail "standalone app should not be rewritten"
 }
 
