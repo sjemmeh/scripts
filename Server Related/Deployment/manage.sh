@@ -11,7 +11,7 @@ REGISTRY_FILE="/root/.config/webvm/ports"
 # --- Helpers ---
 find_free_port() {
     local port=$1
-    while ss -tuln | grep -q ":$port " || grep -q " ${port}$" "$REGISTRY_FILE" 2>/dev/null; do
+    while ss -tuln | grep -q ":$port " || port_is_registered "$port"; do
         msg_warn "Port $port is in use, checking next..."
         ((port++))
         [ "$port" -gt 65535 ] && msg_error "No available ports found in range $1-65535."
@@ -19,23 +19,42 @@ find_free_port() {
     echo "$port"
 }
 
+port_is_registered() {
+    local port="$1"
+    [ -f "$REGISTRY_FILE" ] || return 1
+    awk -v registry_port="$port" '$2 == registry_port { found = 1 } END { exit !found }' "$REGISTRY_FILE"
+}
+
 register_port() {
-    local name="$1" port="$2"
+    local name="$1" port="$2" app_type="${3:-customer}"
     mkdir -p "$(dirname "$REGISTRY_FILE")"
     touch "$REGISTRY_FILE"
-    sed -i "/^${name} /d" "$REGISTRY_FILE"
-    echo "$name $port" >> "$REGISTRY_FILE"
+    remove_registry_entry "$name"
+    echo "$name $port $app_type" >> "$REGISTRY_FILE"
 }
 
 unregister_port() {
     local name="$1"
-    [ -f "$REGISTRY_FILE" ] && sed -i "/^${name} /d" "$REGISTRY_FILE"
+    [ -f "$REGISTRY_FILE" ] && remove_registry_entry "$name"
+}
+
+remove_registry_entry() {
+    local name="$1"
+    local tmp_file="${REGISTRY_FILE}.tmp.$$"
+    [ -f "$REGISTRY_FILE" ] || return 0
+    awk -v registry_name="$name" '$1 != registry_name' "$REGISTRY_FILE" > "$tmp_file" && mv "$tmp_file" "$REGISTRY_FILE"
 }
 
 lookup_port() {
     local name="$1"
     [ -f "$REGISTRY_FILE" ] || { echo ""; return; }
     grep "^${name} " "$REGISTRY_FILE" | awk '{print $2}' | head -1
+}
+
+lookup_app_type() {
+    local name="$1"
+    [ -f "$REGISTRY_FILE" ] || { echo ""; return; }
+    grep "^${name} " "$REGISTRY_FILE" | awk '{print $3}' | head -1
 }
 
 close_firewall_port() {
@@ -258,7 +277,7 @@ mode_deploy() {
 
     configure_bashrc "$CUST_HOME"
     start_container "$CUSTOMER_NAME"
-    register_port "$CUSTOMER_NAME" "$APP_PORT"
+    register_port "$CUSTOMER_NAME" "$APP_PORT" "customer"
 
     echo ""
     echo -e "\e[1;34m--- Deployment Complete ---\e[0m"
@@ -308,7 +327,7 @@ mode_restore_new() {
 
     configure_bashrc "$CUST_HOME"
     start_container "$CUSTOMER_NAME" "pull"
-    register_port "$CUSTOMER_NAME" "$APP_PORT"
+    register_port "$CUSTOMER_NAME" "$APP_PORT" "customer"
 
     echo ""
     echo -e "\e[1;34m--- Restore Complete ---\e[0m"
@@ -369,7 +388,7 @@ mode_create_user() {
 
     open_firewall_port "$APP_PORT"
     configure_bashrc "$CUST_HOME"
-    register_port "$CUSTOMER_NAME" "$APP_PORT"
+    register_port "$CUSTOMER_NAME" "$APP_PORT" "standalone"
 
     msg_info "Enabling podman socket for $CUSTOMER_NAME..."
     local uid
@@ -440,8 +459,12 @@ mode_sync_registry() {
         local existing
         existing=$(lookup_port "$name")
         if [ -z "$existing" ]; then
-            register_port "$name" "$port"
+            register_port "$name" "$port" "customer"
             msg_ok "Registered: $name → $port"
+            (( count++ ))
+        elif [ -z "$(lookup_app_type "$name")" ]; then
+            register_port "$name" "$port" "customer"
+            msg_ok "Updated legacy registry entry: $name → $port customer"
             (( count++ ))
         else
             msg_info "Already registered: $name → $existing (skipped)"
@@ -453,6 +476,50 @@ mode_sync_registry() {
     else
         msg_ok "$count entry/entries added."
     fi
+}
+
+mode_update_customer_images() {
+    echo ""
+    [ -f "$REGISTRY_FILE" ] || msg_error "Registry file not found at $REGISTRY_FILE"
+
+    local home_root="${HOME_ROOT:-/home}"
+    local updated=0
+    local skipped=0
+    local name port app_type app_dir
+
+    msg_info "Updating Docker images for customer apps listed in $REGISTRY_FILE..."
+    while read -r name port app_type; do
+        [ -n "$name" ] || continue
+        [[ "$name" = \#* ]] && continue
+
+        app_type="${app_type:-customer}"
+        if [ "$app_type" != "customer" ]; then
+            msg_info "Skipping standalone app: $name"
+            (( skipped++ ))
+            continue
+        fi
+
+        app_dir="$home_root/$name/app"
+        if [ ! -d "$app_dir" ]; then
+            msg_warn "Skipping $name: app directory not found at $app_dir"
+            (( skipped++ ))
+            continue
+        fi
+
+        if ! id "$name" &>/dev/null; then
+            msg_warn "Skipping $name: user does not exist"
+            (( skipped++ ))
+            continue
+        fi
+
+        write_compose "$app_dir"
+        start_container "$name" "pull"
+        msg_ok "Updated customer image: $name"
+        (( updated++ ))
+    done < "$REGISTRY_FILE"
+
+    echo ""
+    msg_ok "Customer image update complete. Updated: $updated, skipped: $skipped."
 }
 
 mode_backup() {
@@ -471,33 +538,40 @@ mode_backup() {
     msg_ok "Backup:   $BACKUP_FILE"
 }
 
-# --- Entry Point ---
-echo -e "\e[1;34m--- RHEL Podman Web-App Manager (Rootless) ---\e[0m"
-echo ""
+main() {
+    echo -e "\e[1;34m--- RHEL Podman Web-App Manager (Rootless) ---\e[0m"
+    echo ""
 
-if [ "$EUID" -ne 0 ]; then
-    msg_error "This script must be run as root to create users and configure the firewall."
+    if [ "$EUID" -ne 0 ]; then
+        msg_error "This script must be run as root to create users and configure the firewall."
+    fi
+
+    echo ""
+    echo "Select operation:"
+    echo "  1) Deploy new customer"
+    echo "  2) Restore to new customer (from backup)"
+    echo "  3) Restore existing customer (from backup)"
+    echo "  4) Create user (no app)"
+    echo "  5) Backup customer"
+    echo "  6) Remove customer"
+    echo "  7) Sync port registry"
+    echo "  8) Update customer Docker images"
+    echo ""
+    read -p "Enter choice [1-8]: " OPERATION
+
+    case "$OPERATION" in
+        1) mode_deploy ;;
+        2) mode_restore_new ;;
+        3) mode_restore_existing ;;
+        4) mode_create_user ;;
+        5) mode_backup ;;
+        6) mode_remove ;;
+        7) mode_sync_registry ;;
+        8) load_config; mode_update_customer_images ;;
+        *) msg_error "Invalid choice. Enter 1-8." ;;
+    esac
+}
+
+if [ "${MANAGE_SH_LIB_ONLY:-0}" != "1" ]; then
+    main "$@"
 fi
-
-echo ""
-echo "Select operation:"
-echo "  1) Deploy new customer"
-echo "  2) Restore to new customer (from backup)"
-echo "  3) Restore existing customer (from backup)"
-echo "  4) Create user (no app)"
-echo "  5) Backup customer"
-echo "  6) Remove customer"
-echo "  7) Sync port registry"
-echo ""
-read -p "Enter choice [1-7]: " OPERATION
-
-case "$OPERATION" in
-    1) mode_deploy ;;
-    2) mode_restore_new ;;
-    3) mode_restore_existing ;;
-    4) mode_create_user ;;
-    5) mode_backup ;;
-    6) mode_remove ;;
-    7) mode_sync_registry ;;
-    *) msg_error "Invalid choice. Enter 1-7." ;;
-esac
