@@ -70,7 +70,30 @@ test_find_free_port_respects_typed_registry_entries() {
     [ "$next_port" = "3001" ] || fail "expected port 3001 when 3000 is registered, got $next_port"
 }
 
+test_prune_obsolete_images_prunes_registered_users() {
+    REGISTRY_FILE="$TMP_DIR/ports-prune"
+    register_port "acme" "3000" "customer"
+    register_port "landing-page" "3001" "standalone"
+    echo "missing-user 3002 customer" >> "$REGISTRY_FILE"
+
+    PRUNED_USERS=()
+    prune_user_obsolete_images() {
+        PRUNED_USERS+=("$1")
+    }
+
+    id() {
+        [ "$1" != "missing-user" ]
+    }
+
+    mode_prune_obsolete_images
+
+    [ "${#PRUNED_USERS[@]}" -eq 2 ] || fail "expected two users pruned, got ${#PRUNED_USERS[@]}"
+    [ "${PRUNED_USERS[0]}" = "acme" ] || fail "expected acme to be pruned first"
+    [ "${PRUNED_USERS[1]}" = "landing-page" ] || fail "expected landing-page to be pruned second"
+}
+
 test_register_port_records_app_type
 test_update_all_customers_skips_standalone_apps
 test_find_free_port_respects_typed_registry_entries
+test_prune_obsolete_images_prunes_registered_users
 echo "All manage.sh tests passed"

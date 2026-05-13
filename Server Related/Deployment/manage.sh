@@ -235,6 +235,23 @@ start_container() {
     " || msg_error "Failed to start the container application."
 }
 
+prune_user_obsolete_images() {
+    local name="$1"
+    local uid
+    uid=$(id -u "$name")
+
+    msg_info "Pruning obsolete Docker/Podman images for user '$name'..."
+    systemctl start "user@${uid}.service" || \
+        msg_warn "Could not start systemd user instance for $name; trying prune anyway."
+    su - "$name" -c "
+        export XDG_RUNTIME_DIR=/run/user/\$(id -u)
+        export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus
+        export DOCKER_HOST=unix://\$XDG_RUNTIME_DIR/podman/podman.sock
+        systemctl --user enable --now podman.socket >/dev/null 2>&1 || true
+        podman image prune -af
+    "
+}
+
 print_manage_hint() {
     local name="$1"
     echo "---------------------------------------------------"
@@ -522,6 +539,41 @@ mode_update_customer_images() {
     msg_ok "Customer image update complete. Updated: $updated, skipped: $skipped."
 }
 
+mode_prune_obsolete_images() {
+    echo ""
+    [ -f "$REGISTRY_FILE" ] || msg_error "Registry file not found at $REGISTRY_FILE"
+
+    local pruned=0
+    local skipped=0
+    local name port app_type
+
+    msg_warn "This removes unused images from each registered user's rootless Podman storage."
+    msg_warn "Images used by existing containers are kept."
+    msg_info "Pruning obsolete Docker/Podman images for users listed in $REGISTRY_FILE..."
+
+    while read -r name port app_type; do
+        [ -n "$name" ] || continue
+        [[ "$name" = \#* ]] && continue
+
+        if ! id "$name" &>/dev/null; then
+            msg_warn "Skipping $name: user does not exist"
+            (( skipped++ ))
+            continue
+        fi
+
+        if prune_user_obsolete_images "$name"; then
+            msg_ok "Pruned obsolete images for $name"
+            (( pruned++ ))
+        else
+            msg_warn "Could not prune obsolete images for $name"
+            (( skipped++ ))
+        fi
+    done < "$REGISTRY_FILE"
+
+    echo ""
+    msg_ok "Image prune complete. Pruned users: $pruned, skipped: $skipped."
+}
+
 mode_backup() {
     echo ""
     select_webvm_user
@@ -556,8 +608,9 @@ main() {
     echo "  6) Remove customer"
     echo "  7) Sync port registry"
     echo "  8) Update customer Docker images"
+    echo "  9) Prune obsolete Docker images"
     echo ""
-    read -p "Enter choice [1-8]: " OPERATION
+    read -p "Enter choice [1-9]: " OPERATION
 
     case "$OPERATION" in
         1) mode_deploy ;;
@@ -568,7 +621,8 @@ main() {
         6) mode_remove ;;
         7) mode_sync_registry ;;
         8) load_config; mode_update_customer_images ;;
-        *) msg_error "Invalid choice. Enter 1-8." ;;
+        9) mode_prune_obsolete_images ;;
+        *) msg_error "Invalid choice. Enter 1-9." ;;
     esac
 }
 
